@@ -37,30 +37,50 @@ impl Broker {
         let welcomes = listener.incoming().and_then(|(socket, addr)| {
             let framed = socket.framed(MqttCodec);
 
-            let handshake = framed.into_future()
-                                  .map_err(|(err, _)| err)
-                                  .and_then(|(packet, framed)|{
-                                      if let Some(Packet::Connect(c)) = packet {
-                                          println!("{:?}", c);
-                                          Ok(framed)
-                                      } else {
-                                        Err(io::Error::new(io::ErrorKind::Other, "invalid handshake"))
-                                      }
-                                  });
+            // and_then<F, B>(self, f: F) -> AndThen<Self, B, F>
+            // where F: FnOnce(Self::Item) -> B,
+            //       B: IntoFuture<Error=Self::Error>, // Error of value returned by 'F' and Error of Self should match
+            //       Self: Sized
+
+            // => If Self resolves to Ok(_), Execute 'F' with '_'
+
+            // AndThen<Self, B, F> => F: FnOnce(Self::Item) -> B, B: IntoFuture<Error=Self::Error>, Self: Sized
+
+            /// handshake = AndThen<
+            ///                MapErr< Stream<Framed>, closure>, --> Self
+            ///                Result<Framed, io::Error>,        --> B (Should be an IntoFuture whose error = Self's error)
+            ///                closure >                         --> F (Should be which returns 'B')
+
+            /// Creates a 'Self' from stream, whose error match to that of and_then's closure
+            let handshake = framed.into_future().map_err(|(err, _)| err).and_then(|(packet,framed)| {
+                if let Some(Packet::Connect(c)) = packet {
+                    println!("{:?}", c);
+                    Ok(framed)
+                } else {
+                    Err(io::Error::new(io::ErrorKind::Other, "invalid handshake"))
+                }
+            });
+
             handshake
         });
 
+
         let server = welcomes.for_each(|framed| {
-            
+
             let (sender, receiver) = framed.split();
 
-            let connack = Packet::Connack(Connack{session_present: false, code: ConnectReturnCode::Accepted}); 
+            let connack = Packet::Connack(Connack {
+                                              session_present: false,
+                                              code: ConnectReturnCode::Accepted,
+                                          });
             let sender = sender.send(connack).wait();
-            
-            let rx_future = receiver.for_each(|msg| {
-                println!("{:?}", msg);
-                Ok(())
-            }).then(|_| Ok(()));
+
+            let rx_future = receiver
+                .for_each(|msg| {
+                              println!("{:?}", msg);
+                              Ok(())
+                          })
+                .then(|_| Ok(()));
 
             handle.spawn(rx_future);
             Ok(())
