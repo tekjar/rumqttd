@@ -13,9 +13,6 @@ pub mod codec;
 pub mod broker;
 pub mod client;
 
-use broker::Broker;
-
 fn main() {
-    let mut broker = Broker::new();
-    broker.start().unwrap();
+    broker::start();
 }

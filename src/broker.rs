@@ -2,46 +2,72 @@ use error::{Result, Error};
 
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::net::SocketAddr;
+
 use std::collections::HashMap;
 use std::io;
-use std::result;
+use std::fmt::{self, Debug};
 
-
-use futures::future;
 use futures::stream::Stream;
 use futures::Sink;
 use futures::Future;
+use futures::sync::mpsc;
 
 use tokio_core::reactor::Core;
 use tokio_core::net::TcpListener;
 use tokio_io::AsyncRead;
-use tokio_io;
 
 use mqtt3::{Packet, Connack, ConnectReturnCode};
 
 use codec::MqttCodec;
 use client::Client;
 
-
+#[derive(Clone)]
 pub struct Broker {
-    clients: Rc<RefCell<HashMap<SocketAddr, Client>>>,
+    /// All the active clients
+    clients: Rc<RefCell<HashMap<String, Client>>>,
+    /// Subscriptions mapped to interested clients
+    subscriptions: Rc<RefCell<HashMap<String, Vec<String>>>>,
 }
 
 impl Broker {
     pub fn new() -> Self {
-        Broker { clients: Rc::new(RefCell::new(HashMap::new())) }
+        Broker {
+            clients: Rc::new(RefCell::new(HashMap::new())),
+            subscriptions: Rc::new(RefCell::new(HashMap::new())),
+        }
     }
 
-    pub fn start(&mut self) -> Result<()> {
-        let mut core = Core::new().unwrap();
-        let handle = core.handle();
-        let address = "0.0.0.0:1883".parse().unwrap();
-        let listener = TcpListener::bind(&address, &core.handle()).unwrap();
+    pub fn add(&self, client: Client) {
+        self.clients
+            .borrow_mut()
+            .insert(client.id.clone(), client);
+    }
 
-        let welcomes = listener.incoming().and_then(|(socket, addr)| {
-            println!("New connection from: {:?}", addr);
+    pub fn remove(&self, id: &str) -> Option<Client> {
+        self.clients.borrow_mut().remove(id)
+    }
+}
+
+impl Debug for Broker {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:#?}", self.clients.borrow_mut())
+    }
+}
+
+
+pub fn start() -> Result<()> {
+    let mut core = Core::new().unwrap();
+    let handle = core.handle();
+    let address = "0.0.0.0:1883".parse().unwrap();
+    let listener = TcpListener::bind(&address, &core.handle()).unwrap();
+
+    let broker = Broker::new();
+
+    let welcomes = listener.incoming().and_then(|(socket, addr)| {
+            println!("New connection from: {:?}\n", addr);
             let framed = socket.framed(MqttCodec);
+
+            let broker = broker.clone();
 
             // and_then<F, B>(self, f: F) -> AndThen<Self, B, F>
             // where F: FnOnce(Self::Item) -> B,
@@ -58,10 +84,21 @@ impl Broker {
             ///                closure >                         --> F (Should be which returns 'B')
 
             /// Creates a 'Self' from stream, whose error match to that of and_then's closure
-            let handshake = framed.into_future().map_err(|(err, _)| err).and_then(|(packet,framed)| {
+            let handshake = framed.into_future()
+                                  .map_err(|(err, _)| err) // for accept errors, get error and discard the stream
+                                  .and_then(move |(packet,framed)| { // only accepted connections from here
+
+                let broker = broker.clone();
+
                 if let Some(Packet::Connect(c)) = packet {
-                    println!("{:?}", c);
-                    Ok(framed)
+                    //TODO: Do connect packet validation here
+                    let (tx, rx) = mpsc::channel(8);
+
+                    let client = Client::new(&c.client_id, addr, tx);
+                    broker.add(client);
+                    println!("{:?}", broker);
+
+                    Ok((framed, rx))
                 } else {
                     println!("Not a handshake packet");
                     Err(io::Error::new(io::ErrorKind::Other, "invalid handshake"))
@@ -69,43 +106,50 @@ impl Broker {
             });
 
             handshake
+
         });
 
-        let server = welcomes
-            .map(|w| Some(w))
-            .or_else(|e| Ok::<_, ()>(None))
-            .for_each(|framed| {
-                if framed.is_some() {
-                    let (sender, receiver) = framed.unwrap().split();
+    let server = welcomes
+        .map(|w| Some(w))
+        .or_else(|_| Ok::<_, ()>(None))
+        .for_each(|handshake| {
+            // handle each connections n/w send and recv here
+            if let Some((framed, rx)) = handshake {
 
-                    let connack = Packet::Connack(Connack {
-                                                      session_present: false,
-                                                      code: ConnectReturnCode::Accepted,
-                                                  });
+                let (sender, receiver) = framed.split();
 
-                    let sender = sender.send(connack).wait();
+                let connack = Packet::Connack(Connack {
+                                                  session_present: false,
+                                                  code: ConnectReturnCode::Accepted,
+                                              });
 
-                    let rx_future = receiver
-                        .for_each(|msg| {
-                                      println!("{:?}", msg);
-                                      Ok(())
-                                  })
-                        .then(|_| Ok(()));
+                let sender = sender.send(connack).wait();
 
-                    handle.spawn(rx_future);
-                }
-                Ok(())
-            });
+                // current connections incoming n/w packets
+                let rx_future = receiver
+                    .for_each(|msg| {
+                                  println!("Incoming packet: {:?}", msg);
+                                  Ok(())
+                              })
+                    .then(|_| Ok(()));
 
-        core.run(server);
-        Ok(())
-    }
 
-    pub fn add(&self, addr: SocketAddr, client: Client) {
-        self.clients.borrow_mut().insert(addr, client);
-    }
+                //FIND: what happens to rx_future when socket disconnects
+                handle.spawn(rx_future);
 
-    pub fn remove(&self, addr: &SocketAddr) -> Option<Client> {
-        self.clients.borrow_mut().remove(addr)
-    }
+                // Sender implements Sink which allows us to
+                // send messages to the underlying socket connection.
+                // let tx_future = rx.for_each(|r| {
+                //     match r {
+                //         Packet::Publish(m) => Packet::Publish(m)),
+                //         _ => panic!("Misc"),
+                //     }
+                // }).and_then(|p| p)
+                //   .forward(sender);
+            }
+            Ok(())
+        });
+
+    core.run(server).unwrap();
+    Ok(())
 }
