@@ -5,7 +5,10 @@ use std::rc::Rc;
 use std::net::SocketAddr;
 use std::collections::HashMap;
 use std::io;
+use std::result;
 
+
+use futures::future;
 use futures::stream::Stream;
 use futures::Sink;
 use futures::Future;
@@ -13,11 +16,13 @@ use futures::Future;
 use tokio_core::reactor::Core;
 use tokio_core::net::TcpListener;
 use tokio_io::AsyncRead;
+use tokio_io;
 
 use mqtt3::{Packet, Connack, ConnectReturnCode};
 
 use codec::MqttCodec;
 use client::Client;
+
 
 pub struct Broker {
     clients: Rc<RefCell<HashMap<SocketAddr, Client>>>,
@@ -35,6 +40,7 @@ impl Broker {
         let listener = TcpListener::bind(&address, &core.handle()).unwrap();
 
         let welcomes = listener.incoming().and_then(|(socket, addr)| {
+            println!("New connection from: {:?}", addr);
             let framed = socket.framed(MqttCodec);
 
             // and_then<F, B>(self, f: F) -> AndThen<Self, B, F>
@@ -57,6 +63,7 @@ impl Broker {
                     println!("{:?}", c);
                     Ok(framed)
                 } else {
+                    println!("Not a handshake packet");
                     Err(io::Error::new(io::ErrorKind::Other, "invalid handshake"))
                 }
             });
@@ -64,29 +71,33 @@ impl Broker {
             handshake
         });
 
+        let server = welcomes
+            .map(|w| Some(w))
+            .or_else(|e| Ok::<_, ()>(None))
+            .for_each(|framed| {
+                if framed.is_some() {
+                    let (sender, receiver) = framed.unwrap().split();
 
-        let server = welcomes.for_each(|framed| {
+                    let connack = Packet::Connack(Connack {
+                                                      session_present: false,
+                                                      code: ConnectReturnCode::Accepted,
+                                                  });
 
-            let (sender, receiver) = framed.split();
+                    let sender = sender.send(connack).wait();
 
-            let connack = Packet::Connack(Connack {
-                                              session_present: false,
-                                              code: ConnectReturnCode::Accepted,
-                                          });
-            let sender = sender.send(connack).wait();
+                    let rx_future = receiver
+                        .for_each(|msg| {
+                                      println!("{:?}", msg);
+                                      Ok(())
+                                  })
+                        .then(|_| Ok(()));
 
-            let rx_future = receiver
-                .for_each(|msg| {
-                              println!("{:?}", msg);
-                              Ok(())
-                          })
-                .then(|_| Ok(()));
+                    handle.spawn(rx_future);
+                }
+                Ok(())
+            });
 
-            handle.spawn(rx_future);
-            Ok(())
-        });
-
-        core.run(server)?;
+        core.run(server);
         Ok(())
     }
 
