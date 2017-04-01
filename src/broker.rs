@@ -92,13 +92,13 @@ pub fn start() -> Result<()> {
 
                 if let Some(Packet::Connect(c)) = packet {
                     //TODO: Do connect packet validation here
-                    let (tx, rx) = mpsc::channel(8);
+                    let (tx, rx) = mpsc::channel::<Packet>(8);
 
-                    let client = Client::new(&c.client_id, addr, tx);
+                    let client = Client::new(&c.client_id, addr, tx.clone());
                     broker.add(client);
                     println!("{:?}", broker);
 
-                    Ok((framed, rx))
+                    Ok((framed, tx.clone(), rx))
                 } else {
                     println!("Not a handshake packet");
                     Err(io::Error::new(io::ErrorKind::Other, "invalid handshake"))
@@ -114,7 +114,7 @@ pub fn start() -> Result<()> {
         .or_else(|_| Ok::<_, ()>(None))
         .for_each(|handshake| {
             // handle each connections n/w send and recv here
-            if let Some((framed, rx)) = handshake {
+            if let Some((framed, tx, rx)) = handshake {
 
                 let (sender, receiver) = framed.split();
 
@@ -123,12 +123,13 @@ pub fn start() -> Result<()> {
                                                   code: ConnectReturnCode::Accepted,
                                               });
 
-                let sender = sender.send(connack).wait();
+                let tx = tx.send(connack).wait();
+                // let sender = sender.send(connack);
 
                 // current connections incoming n/w packets
                 let rx_future = receiver
                     .for_each(|msg| {
-                                  println!("Incoming packet: {:?}", msg);
+                                  println!  ("Incoming packet: {:?}", msg);
                                   Ok(())
                               })
                     .then(|_| Ok(()));
@@ -139,13 +140,16 @@ pub fn start() -> Result<()> {
 
                 // Sender implements Sink which allows us to
                 // send messages to the underlying socket connection.
-                // let tx_future = rx.for_each(|r| {
-                //     match r {
-                //         Packet::Publish(m) => Packet::Publish(m)),
-                //         _ => panic!("Misc"),
-                //     }
-                // }).and_then(|p| p)
-                //   .forward(sender);
+                let tx_future = rx.map_err(|e| Error::Other).map(|r| {
+                    match r {
+                        Packet::Publish(m) => Packet::Publish(m),
+                        _ => panic!("Misc"),
+                    }
+                }).forward(sender).then(|_| Ok(()));
+
+                // let () = tx_future;
+
+                handle.spawn(tx_future);
             }
             Ok(())
         });
