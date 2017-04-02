@@ -34,13 +34,11 @@ impl Encoder for MqttCodec {
 
         // TODO: Implement `write_packet` for `&mut BytesMut`
         if let Err(_) = stream.write_packet(&msg) {
-            // println!("{:?}", e);
             return Err(io::Error::new(io::ErrorKind::Other, "Unable to encode!"));
         }
 
-        for i in stream.get_ref() {
-            buf.put(*i);
-        }
+        buf.extend(stream.get_ref());
+
         Ok(())
     }
 }
