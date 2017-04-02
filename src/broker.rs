@@ -46,7 +46,7 @@ impl Broker {
     pub fn add_subscription(&self, topic: SubscribeTopic, client: Client) {
         let mut subscriptions = self.subscriptions.borrow_mut();
         let clients = subscriptions.entry(topic).or_insert(Vec::new());
-        
+
         if let Some(index) = clients.iter().position(|v| v.id == client.id) {
             clients.insert(index, client);
         } else {
@@ -61,7 +61,7 @@ impl Broker {
             v.clone()
         } else {
             vec![]
-        }  
+        }
     }
 
     pub fn remove(&self, id: &str) -> Option<Client> {
@@ -71,7 +71,10 @@ impl Broker {
 
 impl Debug for Broker {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:#?}\n{:#?}", self.clients.borrow_mut(), self.subscriptions.borrow_mut())
+        write!(f,
+               "{:#?}\n{:#?}",
+               self.clients.borrow_mut(),
+               self.subscriptions.borrow_mut())
     }
 }
 
@@ -84,7 +87,9 @@ pub fn start() -> Result<()> {
 
     let broker = Broker::new();
 
-    let welcomes = listener.incoming().and_then(|(socket, addr)| {
+    let welcomes = listener
+        .incoming()
+        .and_then(|(socket, addr)| {
             println!("New connection from: {:?}\n", addr);
             let framed = socket.framed(MqttCodec);
 
@@ -143,7 +148,7 @@ pub fn start() -> Result<()> {
 
                 let connack = Packet::Connack(Connack {
                                                   session_present: false,
-                                                  code: ConnectReturnCode::Accepted,    
+                                                  code: ConnectReturnCode::Accepted,
                                               });
 
                 let connack_tx = client.tx.clone();
@@ -152,33 +157,44 @@ pub fn start() -> Result<()> {
                 // current connections incoming n/w packets
                 let rx_future = receiver
                     .for_each(move |msg| {
-                        println!("{:?}", msg);
                         match msg {
-                            Packet::Publish(p) => { 
+                            Packet::Publish(p) => {
                                 let topic = p.topic_name.clone();
                                 let qos = p.qos;
+                                let payload = p.payload;
 
                                 //TODO: Handle acks here
 
                                 // publish to all the subscribers in different qos `SubscribeTopic`
                                 // hash keys
-                                for qos in [QoS::AtLeastOnce, QoS::AtMostOnce, QoS::ExactlyOnce].iter() {
-                                    let subscribe_topic = SubscribeTopic{topic_path: topic.clone(), qos: qos.clone()};
+                                for qos in [QoS::AtMostOnce, QoS::AtLeastOnce, QoS::ExactlyOnce].iter() {
 
-                                    for client in broker.get_subscribed_clients(subscribe_topic) {
+                                    let subscribe_topic = SubscribeTopic {
+                                        topic_path: topic.clone(),
+                                        qos: qos.clone(),
+                                    };
+
+                                    for mut client in broker.get_subscribed_clients(subscribe_topic) {
+
+                                        let pkid = if *qos == QoS::AtMostOnce {
+                                            None
+                                        } else {
+                                            Some(client.next_pkid())
+                                        };
+
                                         let publish = Packet::Publish(Box::new(Publish {
-                                            dup: true,
-                                            qos: qos.clone(),
-                                            retain: false,
-                                            topic_name: topic.clone(),
-                                            pid: if *qos == QoS::AtLeastOnce {None} else { Some(PacketIdentifier(1))},
-                                            payload: p.payload.clone(),
-                                        }));
+                                                                                   dup: false,
+                                                                                   qos: qos.clone(),
+                                                                                   retain: false,
+                                                                                   topic_name: topic.clone(),
+                                                                                   pid: pkid,
+                                                                                   payload: payload.clone(),
+                                                                               }));
 
                                         client.tx.clone().send(publish).wait();
                                     }
                                 }
-                                
+
                             }
                             Packet::Connack(c) => (),
                             Packet::Subscribe(s) => {
@@ -192,14 +208,12 @@ pub fn start() -> Result<()> {
                                 }
 
                                 let suback = Packet::Suback(Box::new(Suback {
-                                                                pid: pkid,
-                                                                return_codes: return_codes,
-                                                            }));
+                                                                         pid: pkid,
+                                                                         return_codes: return_codes,
+                                                                     }));
                                 client.tx.clone().send(suback).wait();
-
-                                println!("{:?}", broker);
                             }
-                            _ => println!("Misc: {:?}", msg),
+                            _ => println!("Incoming Misc: {:?}", msg),
                         }
                         Ok(())
                     })
@@ -215,7 +229,7 @@ pub fn start() -> Result<()> {
                              Packet::Publish(m) => Packet::Publish(m),
                              Packet::Connack(c) => Packet::Connack(c),
                              Packet::Suback(s) => Packet::Suback(s),
-                             _ => panic!("Misc: {:?}", r),
+                             _ => panic!("Outgoing Misc: {:?}", r),
                          })
                     .forward(sender)
                     .then(|_| Ok(()));
