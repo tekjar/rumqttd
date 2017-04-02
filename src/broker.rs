@@ -16,7 +16,7 @@ use tokio_core::reactor::Core;
 use tokio_core::net::TcpListener;
 use tokio_io::AsyncRead;
 
-use mqtt3::{Packet, Connack, ConnectReturnCode};
+use mqtt3::*;
 
 use codec::MqttCodec;
 use client::Client;
@@ -26,7 +26,7 @@ pub struct Broker {
     /// All the active clients
     clients: Rc<RefCell<HashMap<String, Client>>>,
     /// Subscriptions mapped to interested clients
-    subscriptions: Rc<RefCell<HashMap<String, Vec<String>>>>,
+    subscriptions: Rc<RefCell<HashMap<SubscribeTopic, Vec<Client>>>>,
 }
 
 impl Broker {
@@ -37,10 +37,31 @@ impl Broker {
         }
     }
 
-    pub fn add(&self, client: Client) {
+    pub fn add_client(&self, client: Client) {
         self.clients
             .borrow_mut()
             .insert(client.id.clone(), client);
+    }
+
+    pub fn add_subscription(&self, topic: SubscribeTopic, client: Client) {
+        let mut subscriptions = self.subscriptions.borrow_mut();
+        let clients = subscriptions.entry(topic).or_insert(Vec::new());
+        
+        if let Some(index) = clients.iter().position(|v| v.id == client.id) {
+            clients.insert(index, client);
+        } else {
+            clients.push(client);
+        }
+    }
+
+    pub fn get_subscribed_clients(&self, topic: SubscribeTopic) -> Vec<Client> {
+        let mut subscriptions = self.subscriptions.borrow_mut();
+
+        if let Some(v) = subscriptions.get(&topic) {
+            v.clone()
+        } else {
+            vec![]
+        }  
     }
 
     pub fn remove(&self, id: &str) -> Option<Client> {
@@ -50,7 +71,7 @@ impl Broker {
 
 impl Debug for Broker {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:#?}", self.clients.borrow_mut())
+        write!(f, "{:#?}\n{:#?}", self.clients.borrow_mut(), self.subscriptions.borrow_mut())
     }
 }
 
@@ -95,10 +116,9 @@ pub fn start() -> Result<()> {
                     let (tx, rx) = mpsc::channel::<Packet>(8);
 
                     let client = Client::new(&c.client_id, addr, tx.clone());
-                    broker.add(client);
-                    println!("{:?}", broker);
+                    broker.add_client(client.clone());
 
-                    Ok((framed, tx.clone(), rx))
+                    Ok((framed, client, rx))
                 } else {
                     println!("Not a handshake packet");
                     Err(io::Error::new(io::ErrorKind::Other, "invalid handshake"))
@@ -113,41 +133,92 @@ pub fn start() -> Result<()> {
         .map(|w| Some(w))
         .or_else(|_| Ok::<_, ()>(None))
         .for_each(|handshake| {
+
+            let broker = broker.clone();
+
             // handle each connections n/w send and recv here
-            if let Some((framed, tx, rx)) = handshake {
+            if let Some((framed, client, rx)) = handshake {
 
                 let (sender, receiver) = framed.split();
 
                 let connack = Packet::Connack(Connack {
                                                   session_present: false,
-                                                  code: ConnectReturnCode::Accepted,
+                                                  code: ConnectReturnCode::Accepted,    
                                               });
 
-                let tx = tx.send(connack).wait();
-                // let sender = sender.send(connack);
+                let connack_tx = client.tx.clone();
+                let _ = connack_tx.send(connack).wait();
 
                 // current connections incoming n/w packets
                 let rx_future = receiver
-                    .for_each(|msg| {
-                                  println!  ("Incoming packet: {:?}", msg);
-                                  Ok(())
-                              })
+                    .for_each(move |msg| {
+                        println!("{:?}", msg);
+                        match msg {
+                            Packet::Publish(p) => { 
+                                let topic = p.topic_name.clone();
+                                let qos = p.qos;
+
+                                //TODO: Handle acks here
+
+                                // publish to all the subscribers in different qos `SubscribeTopic`
+                                // hash keys
+                                for qos in [QoS::AtLeastOnce, QoS::AtMostOnce, QoS::ExactlyOnce].iter() {
+                                    let subscribe_topic = SubscribeTopic{topic_path: topic.clone(), qos: qos.clone()};
+
+                                    for client in broker.get_subscribed_clients(subscribe_topic) {
+                                        let publish = Packet::Publish(Box::new(Publish {
+                                            dup: true,
+                                            qos: qos.clone(),
+                                            retain: false,
+                                            topic_name: topic.clone(),
+                                            pid: if *qos == QoS::AtLeastOnce {None} else { Some(PacketIdentifier(1))},
+                                            payload: p.payload.clone(),
+                                        }));
+
+                                        client.tx.clone().send(publish).wait();
+                                    }
+                                }
+                                
+                            }
+                            Packet::Connack(c) => (),
+                            Packet::Subscribe(s) => {
+                                let pkid = s.pid;
+                                let mut return_codes = Vec::new();
+
+                                // Add current client's id to this subscribe topic
+                                for topic in s.topics {
+                                    broker.add_subscription(topic.clone(), client.clone());
+                                    return_codes.push(SubscribeReturnCodes::Success(topic.qos));
+                                }
+
+                                let suback = Packet::Suback(Box::new(Suback {
+                                                                pid: pkid,
+                                                                return_codes: return_codes,
+                                                            }));
+                                client.tx.clone().send(suback).wait();
+
+                                println!("{:?}", broker);
+                            }
+                            _ => println!("Misc: {:?}", msg),
+                        }
+                        Ok(())
+                    })
                     .then(|_| Ok(()));
 
 
                 //FIND: what happens to rx_future when socket disconnects
                 handle.spawn(rx_future);
 
-                // Sender implements Sink which allows us to
-                // send messages to the underlying socket connection.
-                let tx_future = rx.map_err(|e| Error::Other).map(|r| {
-                    match r {
-                        Packet::Publish(m) => Packet::Publish(m),
-                        _ => panic!("Misc"),
-                    }
-                }).forward(sender).then(|_| Ok(()));
-
-                // let () = tx_future;
+                // current connections outgoing n/w packets
+                let tx_future = rx.map_err(|e| Error::Other)
+                    .map(|r| match r {
+                             Packet::Publish(m) => Packet::Publish(m),
+                             Packet::Connack(c) => Packet::Connack(c),
+                             Packet::Suback(s) => Packet::Suback(s),
+                             _ => panic!("Misc: {:?}", r),
+                         })
+                    .forward(sender)
+                    .then(|_| Ok(()));
 
                 handle.spawn(tx_future);
             }

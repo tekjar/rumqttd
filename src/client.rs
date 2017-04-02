@@ -8,7 +8,7 @@ use mqtt3::Packet;
 pub struct Client {
     pub id: String,
     pub addr: SocketAddr,
-    tx: Sender<Packet>,
+    pub tx: Sender<Packet>,
 }
 
 impl Debug for Client {
