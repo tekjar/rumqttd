@@ -13,7 +13,7 @@ use mqtt3::*;
 pub struct ClientState {
     pub last_pkid: PacketIdentifier,
     /// For QoS 1. Stores outgoing publishes
-    pub outgoing_pub: VecDeque<Box<Message>>,
+    pub outgoing_pub: VecDeque<Box<Publish>>,
     /// For QoS 2. Stores outgoing publishes
     pub outgoing_rec: VecDeque<Box<Message>>,
     /// For QoS 2. Stores outgoing release
@@ -61,7 +61,7 @@ impl Client {
         }
     }
 
-    pub fn next_pkid(&mut self) -> PacketIdentifier {
+    pub fn next_pkid(&self) -> PacketIdentifier {
         let mut state = self.state.borrow_mut();
         let PacketIdentifier(mut pkid) = state.last_pkid;
         if pkid == 65535 {
@@ -69,6 +69,29 @@ impl Client {
         }
         state.last_pkid = PacketIdentifier(pkid + 1);
         state.last_pkid
+    }
+
+
+    // TODO: Find out if broker should drop message if a new massage with existing
+    // pkid is received
+    pub fn store_publish(&self, publish: Box<Publish>) {
+        let mut state = self.state.borrow_mut();
+        state.outgoing_pub.push_back(publish.clone());
+    }
+
+    pub fn remove_publish(&self, pkid: PacketIdentifier) {
+        let mut state = self.state.borrow_mut();
+
+        match state
+                  .outgoing_pub
+                  .iter()
+                  .position(|x| x.pid == Some(pkid)) {
+            Some(i) => state.outgoing_pub.remove(i),
+            None => {
+                // error!("Oopssss..unsolicited ack --> {:?}\n", puback);
+                None
+            }
+        };
     }
 
     pub fn send(&self, packet: Packet) {
@@ -100,5 +123,69 @@ impl Client {
                                      payload: payload.clone(),
                                  }))
 
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::sync::Arc;
+    use futures::sync::mpsc::{self, Receiver};
+    use super::Client;
+    use mqtt3::*;
+
+    fn mock_client() -> (Client, Receiver<Packet>) {
+        let (tx, rx) = mpsc::channel::<Packet>(8);
+        (Client::new("mock-client", "127.0.0.1:80".parse().unwrap(), tx), rx)
+    }
+
+
+    #[test]
+    fn next_pkid_roll() {
+        let (client, ..) = mock_client();
+        let mut pkid = PacketIdentifier(0);
+        for _ in 0..65536 {
+            pkid = client.next_pkid();
+        }
+        assert_eq!(PacketIdentifier(1), pkid);
+    }
+
+    #[test]
+    fn add_and_remove_of_message_from_publish_queue() {
+        let (client, ..) = mock_client();
+
+        for i in 0..100 {
+            let publish = Box::new(Publish {
+                                       dup: false,
+                                       qos: QoS::AtLeastOnce,
+                                       retain: false,
+                                       pid: Some(PacketIdentifier(i)),
+                                       topic_name: "hello/world".to_owned(),
+                                       payload: Arc::new(vec![1, 2, 3]),
+                                   });
+
+            client.store_publish(publish);
+        }
+
+        // sequential remove
+        for i in 0..10 {
+            client.remove_publish(PacketIdentifier(i));
+        }
+
+        let state = client.state.borrow_mut();
+
+        for i in 0..10 {
+            let index = state.outgoing_pub.iter().position(|x| x.pid == Some(PacketIdentifier(i)));
+            assert_eq!(index, None);
+        }
+
+        // big sequential remove
+        for i in 10..90 {
+            client.remove_publish(PacketIdentifier(i));
+        }
+
+        for i in 10..90 {
+            let index = state.outgoing_pub.iter().position(|x| x.pid == Some(PacketIdentifier(i)));
+            assert_eq!(index, None);
+        }
     }
 }
