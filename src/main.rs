@@ -14,5 +14,5 @@ pub mod broker;
 pub mod client;
 
 fn main() {
-    broker::start();
+    broker::start().unwrap();
 }

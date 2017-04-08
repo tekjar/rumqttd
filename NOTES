@@ -1,0 +1,14 @@
+ // and_then<F, B>(self, f: F) -> AndThen<Self, B, F>
+            
+            // where F: FnOnce(Self::Item) -> B,
+            //       B: IntoFuture<Error=Self::Error>, // Error of value returned by 'F' and Error of Self should match
+            //       Self: Sized
+
+            // => If Self resolves to Ok(_), Execute 'F' with '_'
+
+            // AndThen<Self, B, F> => F: FnOnce(Self::Item) -> B, B: IntoFuture<Error=Self::Error>, Self: Sized
+
+            /// handshake = AndThen<
+            ///                MapErr< Stream<Framed>, closure>, --> Self
+            ///                Result<Framed, io::Error>,        --> B (Should be an IntoFuture whose error = Self's error)
+            ///                closure >                         --> F (Should be which returns 'B')

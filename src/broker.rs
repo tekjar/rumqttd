@@ -23,7 +23,7 @@ use client::Client;
 
 #[derive(Clone)]
 pub struct Broker {
-    /// All the active clients
+    /// All the active clients mapped to their IDs
     clients: Rc<RefCell<HashMap<String, Client>>>,
     /// Subscriptions mapped to interested clients
     subscriptions: Rc<RefCell<HashMap<SubscribeTopic, Vec<Client>>>>,
@@ -55,7 +55,7 @@ impl Broker {
     }
 
     pub fn get_subscribed_clients(&self, topic: SubscribeTopic) -> Vec<Client> {
-        let mut subscriptions = self.subscriptions.borrow_mut();
+        let subscriptions = self.subscriptions.borrow_mut();
 
         if let Some(v) = subscriptions.get(&topic) {
             v.clone()
@@ -66,6 +66,48 @@ impl Broker {
 
     pub fn remove(&self, id: &str) -> Option<Client> {
         self.clients.borrow_mut().remove(id)
+    }
+
+    pub fn handle_subscribe(&self, subscribe: Box<Subscribe>, client: &Client) {
+        let pkid = subscribe.pid;
+        let mut return_codes = Vec::new();
+
+        // Add current client's id to this subscribe topic
+        for topic in subscribe.topics {
+            self.add_subscription(topic.clone(), client.clone());
+            return_codes.push(SubscribeReturnCodes::Success(topic.qos));
+        }
+
+        let suback = client.suback_packet(pkid, return_codes);
+        client.send(suback);
+    }
+
+    pub fn handle_publish(&self, publish: Box<Publish>, client: &Client) {
+        let topic = publish.topic_name.clone();
+        // let qos = publish.qos;
+        let payload = publish.payload;
+
+        //TODO: Handle acks here
+
+        // publish to all the subscribers in different qos `SubscribeTopic`
+        // hash keys
+        for qos in [QoS::AtMostOnce, QoS::AtLeastOnce, QoS::ExactlyOnce].iter() {
+
+            let subscribe_topic = SubscribeTopic {
+                topic_path: topic.clone(),
+                qos: qos.clone(),
+            };
+
+            for mut client in self.get_subscribed_clients(subscribe_topic) {
+                let publish = client.publish_packet(&topic, qos.clone(), payload.clone(), false, false);
+                client.send(publish);
+            }
+        }
+    }
+
+    pub fn handle_pingreq(&self, client: &Client) {
+        let pingresp = Packet::Pingresp;
+        client.send(pingresp);
     }
 }
 
@@ -95,21 +137,7 @@ pub fn start() -> Result<()> {
 
             let broker = broker.clone();
 
-            // and_then<F, B>(self, f: F) -> AndThen<Self, B, F>
-            // where F: FnOnce(Self::Item) -> B,
-            //       B: IntoFuture<Error=Self::Error>, // Error of value returned by 'F' and Error of Self should match
-            //       Self: Sized
-
-            // => If Self resolves to Ok(_), Execute 'F' with '_'
-
-            // AndThen<Self, B, F> => F: FnOnce(Self::Item) -> B, B: IntoFuture<Error=Self::Error>, Self: Sized
-
-            /// handshake = AndThen<
-            ///                MapErr< Stream<Framed>, closure>, --> Self
-            ///                Result<Framed, io::Error>,        --> B (Should be an IntoFuture whose error = Self's error)
-            ///                closure >                         --> F (Should be which returns 'B')
-
-            /// Creates a 'Self' from stream, whose error match to that of and_then's closure
+            // Creates a 'Self' from stream, whose error match to that of and_then's closure
             let handshake = framed.into_future()
                                   .map_err(|(err, _)| err) // for accept errors, get error and discard the stream
                                   .and_then(move |(packet,framed)| { // only accepted connections from here
@@ -117,7 +145,7 @@ pub fn start() -> Result<()> {
                 let broker = broker.clone();
 
                 if let Some(Packet::Connect(c)) = packet {
-                    //TODO: Do connect packet validation here
+                    // TODO: Do connect packet validation here
                     let (tx, rx) = mpsc::channel::<Packet>(8);
 
                     let client = Client::new(&c.client_id, addr, tx.clone());
@@ -158,61 +186,9 @@ pub fn start() -> Result<()> {
                 let rx_future = receiver
                     .for_each(move |msg| {
                         match msg {
-                            Packet::Publish(p) => {
-                                let topic = p.topic_name.clone();
-                                let qos = p.qos;
-                                let payload = p.payload;
-
-                                //TODO: Handle acks here
-
-                                // publish to all the subscribers in different qos `SubscribeTopic`
-                                // hash keys
-                                for qos in [QoS::AtMostOnce, QoS::AtLeastOnce, QoS::ExactlyOnce].iter() {
-
-                                    let subscribe_topic = SubscribeTopic {
-                                        topic_path: topic.clone(),
-                                        qos: qos.clone(),
-                                    };
-
-                                    for mut client in broker.get_subscribed_clients(subscribe_topic) {
-
-                                        let pkid = if *qos == QoS::AtMostOnce {
-                                            None
-                                        } else {
-                                            Some(client.next_pkid())
-                                        };
-
-                                        let publish = Packet::Publish(Box::new(Publish {
-                                                                                   dup: false,
-                                                                                   qos: qos.clone(),
-                                                                                   retain: false,
-                                                                                   topic_name: topic.clone(),
-                                                                                   pid: pkid,
-                                                                                   payload: payload.clone(),
-                                                                               }));
-
-                                        client.tx.clone().send(publish).wait();
-                                    }
-                                }
-
-                            }
-                            Packet::Connack(c) => (),
-                            Packet::Subscribe(s) => {
-                                let pkid = s.pid;
-                                let mut return_codes = Vec::new();
-
-                                // Add current client's id to this subscribe topic
-                                for topic in s.topics {
-                                    broker.add_subscription(topic.clone(), client.clone());
-                                    return_codes.push(SubscribeReturnCodes::Success(topic.qos));
-                                }
-
-                                let suback = Packet::Suback(Box::new(Suback {
-                                                                         pid: pkid,
-                                                                         return_codes: return_codes,
-                                                                     }));
-                                client.tx.clone().send(suback).wait();
-                            }
+                            Packet::Publish(p) => broker.handle_publish(p, &client),
+                            Packet::Subscribe(s) => broker.handle_subscribe(s, &client),
+                            Packet::Pingreq => broker.handle_pingreq(&client),
                             _ => println!("Incoming Misc: {:?}", msg),
                         }
                         Ok(())
@@ -224,11 +200,12 @@ pub fn start() -> Result<()> {
                 handle.spawn(rx_future);
 
                 // current connections outgoing n/w packets
-                let tx_future = rx.map_err(|e| Error::Other)
+                let tx_future = rx.map_err(|_| Error::Other)
                     .map(|r| match r {
                              Packet::Publish(m) => Packet::Publish(m),
                              Packet::Connack(c) => Packet::Connack(c),
                              Packet::Suback(s) => Packet::Suback(s),
+                             Packet::Pingresp => Packet::Pingresp,
                              _ => panic!("Outgoing Misc: {:?}", r),
                          })
                     .forward(sender)

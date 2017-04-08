@@ -1,5 +1,5 @@
 use std::io::{self, Cursor};
-use bytes::{BytesMut, BufMut};
+use bytes::BytesMut;
 use tokio_io::codec::{Encoder, Decoder};
 
 use mqtt3::{Packet, MqttWrite, MqttRead};
