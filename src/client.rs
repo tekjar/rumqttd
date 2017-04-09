@@ -79,7 +79,7 @@ impl Client {
         state.outgoing_pub.push_back(publish.clone());
     }
 
-    pub fn remove_publish(&self, pkid: PacketIdentifier) {
+    pub fn remove_publish(&self, pkid: PacketIdentifier) -> Option<Box<Publish>> {
         let mut state = self.state.borrow_mut();
 
         match state
@@ -87,11 +87,8 @@ impl Client {
                   .iter()
                   .position(|x| x.pid == Some(pkid)) {
             Some(i) => state.outgoing_pub.remove(i),
-            None => {
-                // error!("Oopssss..unsolicited ack --> {:?}\n", puback);
-                None
-            }
-        };
+            None => None,
+        }
     }
 
     pub fn store_record(&self, publish: Box<Publish>) {
@@ -99,7 +96,7 @@ impl Client {
         state.outgoing_rec.push_back(publish.clone());
     }
 
-    pub fn remove_record(&self, pkid: PacketIdentifier) {
+    pub fn remove_record(&self, pkid: PacketIdentifier) -> Option<Box<Publish>> {
         let mut state = self.state.borrow_mut();
 
         match state
@@ -107,11 +104,8 @@ impl Client {
                   .iter()
                   .position(|x| x.pid == Some(pkid)) {
             Some(i) => state.outgoing_rec.remove(i),
-            None => {
-                // error!("Oopssss..unsolicited ack --> {:?}\n", puback);
-                None
-            }
-        };
+            None => None,
+        }
     }
 
     pub fn store_rel(&self, pkid: PacketIdentifier) {
@@ -122,10 +116,7 @@ impl Client {
     pub fn remove_rel(&self, pkid: PacketIdentifier) {
         let mut state = self.state.borrow_mut();
 
-        match state
-                  .outgoing_rel
-                  .iter()
-                  .position(|x| *x == pkid) {
+        match state.outgoing_rel.iter().position(|x| *x == pkid) {
             Some(i) => state.outgoing_rel.remove(i),
             None => {
                 // error!("Oopssss..unsolicited ack --> {:?}\n", puback);
@@ -142,10 +133,7 @@ impl Client {
     pub fn remove_comp(&self, pkid: PacketIdentifier) {
         let mut state = self.state.borrow_mut();
 
-        match state
-                  .outgoing_comp
-                  .iter()
-                  .position(|x| *x == pkid) {
+        match state.outgoing_comp.iter().position(|x| *x == pkid) {
             Some(i) => state.outgoing_comp.remove(i),
             None => {
                 // error!("Oopssss..unsolicited ack --> {:?}\n", puback);
@@ -158,15 +146,15 @@ impl Client {
         let _ = self.tx.clone().send(packet).wait();
     }
 
-    pub fn suback_packet(&self, pkid: PacketIdentifier, return_codes: Vec<SubscribeReturnCodes>) -> Packet {
+    pub fn suback_packet(&self, pkid: PacketIdentifier, return_codes: Vec<SubscribeReturnCodes>) -> Box<Suback> {
 
-        Packet::Suback(Box::new(Suback {
-                                    pid: pkid,
-                                    return_codes: return_codes,
-                                }))
+        Box::new(Suback {
+                     pid: pkid,
+                     return_codes: return_codes,
+                 })
     }
 
-    pub fn publish_packet(&mut self, topic: &str, qos: QoS, payload: Arc<Vec<u8>>, dup: bool, retain: bool) -> Packet {
+    pub fn publish_packet(&self, topic: &str, qos: QoS, payload: Arc<Vec<u8>>, dup: bool, retain: bool) -> Box<Publish> {
 
         let pkid = if qos == QoS::AtMostOnce {
             None
@@ -174,14 +162,14 @@ impl Client {
             Some(self.next_pkid())
         };
 
-        Packet::Publish(Box::new(Publish {
-                                     dup: dup,
-                                     qos: qos,
-                                     retain: retain,
-                                     pid: pkid,
-                                     topic_name: topic.to_owned(),
-                                     payload: payload.clone(),
-                                 }))
+        Box::new(Publish {
+                     dup: dup,
+                     qos: qos,
+                     retain: retain,
+                     pid: pkid,
+                     topic_name: topic.to_owned(),
+                     payload: payload.clone(),
+                 })
 
     }
 }
@@ -262,7 +250,7 @@ mod test {
             }
         }
 
-         // intermediate removes
+        // intermediate removes
         for i in [91_u16, 93, 95, 97, 99].iter() {
             client.remove_publish(PacketIdentifier(*i));
         }
