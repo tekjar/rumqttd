@@ -15,7 +15,7 @@ pub struct ClientState {
     /// For QoS 1. Stores outgoing publishes
     pub outgoing_pub: VecDeque<Box<Publish>>,
     /// For QoS 2. Stores outgoing publishes
-    pub outgoing_rec: VecDeque<Box<Message>>,
+    pub outgoing_rec: VecDeque<Box<Publish>>,
     /// For QoS 2. Stores outgoing release
     pub outgoing_rel: VecDeque<PacketIdentifier>,
     /// For QoS 2. Stores outgoing comp
@@ -87,6 +87,66 @@ impl Client {
                   .iter()
                   .position(|x| x.pid == Some(pkid)) {
             Some(i) => state.outgoing_pub.remove(i),
+            None => {
+                // error!("Oopssss..unsolicited ack --> {:?}\n", puback);
+                None
+            }
+        };
+    }
+
+    pub fn store_record(&self, publish: Box<Publish>) {
+        let mut state = self.state.borrow_mut();
+        state.outgoing_rec.push_back(publish.clone());
+    }
+
+    pub fn remove_record(&self, pkid: PacketIdentifier) {
+        let mut state = self.state.borrow_mut();
+
+        match state
+                  .outgoing_pub
+                  .iter()
+                  .position(|x| x.pid == Some(pkid)) {
+            Some(i) => state.outgoing_rec.remove(i),
+            None => {
+                // error!("Oopssss..unsolicited ack --> {:?}\n", puback);
+                None
+            }
+        };
+    }
+
+    pub fn store_rel(&self, pkid: PacketIdentifier) {
+        let mut state = self.state.borrow_mut();
+        state.outgoing_rel.push_back(pkid);
+    }
+
+    pub fn remove_rel(&self, pkid: PacketIdentifier) {
+        let mut state = self.state.borrow_mut();
+
+        match state
+                  .outgoing_rel
+                  .iter()
+                  .position(|x| *x == pkid) {
+            Some(i) => state.outgoing_rel.remove(i),
+            None => {
+                // error!("Oopssss..unsolicited ack --> {:?}\n", puback);
+                None
+            }
+        };
+    }
+
+    pub fn store_comp(&self, pkid: PacketIdentifier) {
+        let mut state = self.state.borrow_mut();
+        state.outgoing_comp.push_back(pkid);
+    }
+
+    pub fn remove_comp(&self, pkid: PacketIdentifier) {
+        let mut state = self.state.borrow_mut();
+
+        match state
+                  .outgoing_comp
+                  .iter()
+                  .position(|x| *x == pkid) {
+            Some(i) => state.outgoing_comp.remove(i),
             None => {
                 // error!("Oopssss..unsolicited ack --> {:?}\n", puback);
                 None
@@ -171,11 +231,18 @@ mod test {
             client.remove_publish(PacketIdentifier(i));
         }
 
-        let state = client.state.borrow_mut();
+        {
+            // to make sure that the following client methods doesn't panic
+            let state = client.state.borrow_mut();
 
-        for i in 0..10 {
-            let index = state.outgoing_pub.iter().position(|x| x.pid == Some(PacketIdentifier(i)));
-            assert_eq!(index, None);
+            for i in 0..10 {
+                let index = state
+                    .outgoing_pub
+                    .iter()
+                    .position(|x| x.pid == Some(PacketIdentifier(i)));
+                assert_eq!(index, None);
+            }
+
         }
 
         // big sequential remove
@@ -183,9 +250,36 @@ mod test {
             client.remove_publish(PacketIdentifier(i));
         }
 
-        for i in 10..90 {
-            let index = state.outgoing_pub.iter().position(|x| x.pid == Some(PacketIdentifier(i)));
-            assert_eq!(index, None);
+        {
+            // to make sure that the following client methods doesn't panic
+            let state = client.state.borrow_mut();
+            for i in 10..90 {
+                let index = state
+                    .outgoing_pub
+                    .iter()
+                    .position(|x| x.pid == Some(PacketIdentifier(i)));
+                assert_eq!(index, None);
+            }
+        }
+
+         // intermediate removes
+        for i in [91_u16, 93, 95, 97, 99].iter() {
+            client.remove_publish(PacketIdentifier(*i));
+        }
+
+        {
+            // to make sure that the following client methods doesn't panic
+            let state = client.state.borrow_mut();
+            let mut expected_index = 0;
+
+            for i in [90, 92, 94, 96, 98].iter() {
+                let index = state
+                    .outgoing_pub
+                    .iter()
+                    .position(|x| x.pid == Some(PacketIdentifier(*i)));
+                assert_eq!(index, Some(expected_index));
+                expected_index += 1;
+            }
         }
     }
 }
