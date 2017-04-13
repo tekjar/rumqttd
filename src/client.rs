@@ -113,16 +113,13 @@ impl Client {
         state.outgoing_rel.push_back(pkid);
     }
 
-    pub fn remove_rel(&self, pkid: PacketIdentifier) {
+    pub fn remove_rel(&self, pkid: PacketIdentifier) -> Option<PacketIdentifier> {
         let mut state = self.state.borrow_mut();
 
         match state.outgoing_rel.iter().position(|x| *x == pkid) {
             Some(i) => state.outgoing_rel.remove(i),
-            None => {
-                // error!("Oopssss..unsolicited ack --> {:?}\n", puback);
-                None
-            }
-        };
+            None => None,
+        }
     }
 
     pub fn store_comp(&self, pkid: PacketIdentifier) {
@@ -130,16 +127,13 @@ impl Client {
         state.outgoing_comp.push_back(pkid);
     }
 
-    pub fn remove_comp(&self, pkid: PacketIdentifier) {
+    pub fn remove_comp(&self, pkid: PacketIdentifier) -> Option<PacketIdentifier> {
         let mut state = self.state.borrow_mut();
 
         match state.outgoing_comp.iter().position(|x| *x == pkid) {
             Some(i) => state.outgoing_comp.remove(i),
-            None => {
-                // error!("Oopssss..unsolicited ack --> {:?}\n", puback);
-                None
-            }
-        };
+            None => None,
+        }
     }
 
     pub fn send(&self, packet: Packet) {

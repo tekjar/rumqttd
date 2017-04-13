@@ -4,7 +4,10 @@ extern crate tokio_core;
 extern crate tokio_io;
 extern crate tokio_timer;
 extern crate bytes;
-
+#[macro_use]
+extern crate slog;
+extern crate slog_term;
+extern crate slog_async;
 #[macro_use]
 extern crate quick_error;
 
