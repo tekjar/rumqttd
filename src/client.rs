@@ -89,7 +89,7 @@ impl Client {
     pub fn store_publish(&self, publish: Box<Publish>) {
         let mut state = self.state.borrow_mut();
         state.outgoing_pub.push_back(publish.clone());
-        debug!(self.logger, "Stored PUBLISH")
+        debug!(self.logger, "Stored PUBLISH packet: {:?}", publish.pid)
     }
 
     pub fn remove_publish(&self, pkid: PacketIdentifier) -> Option<Box<Publish>> {
@@ -109,7 +109,7 @@ impl Client {
     pub fn store_record(&self, publish: Box<Publish>) {
         let mut state = self.state.borrow_mut();
         state.outgoing_rec.push_back(publish.clone());
-        debug!(self.logger, "Stored RECORD");
+        debug!(self.logger, "Stored RECORD packet: {:?}", publish.pid);
     }
 
     pub fn remove_record(&self, pkid: PacketIdentifier) -> Option<Box<Publish>> {
@@ -190,6 +190,22 @@ impl Client {
                      payload: payload.clone(),
                  })
 
+    }
+
+    pub fn queues(&self) {
+        let state = self.state.borrow();
+
+        print!("OUTGOING REC = [");
+        for e in state.outgoing_rec.iter() {
+            print!("{:?} ", e.pid);
+        }
+        println!(" ]");
+
+        print!("OUTGOING REL = [");
+        for e in state.outgoing_rel.iter() {
+            print!("{:?} ", e);
+        }
+        println!(" ]");
     }
 }
 

@@ -14,7 +14,10 @@ impl Decoder for MqttCodec {
         let (packet, len) = {
             let mut buf_ref = buf.as_ref();
             match buf_ref.read_packet_with_len() {
-                Err(..) => return Ok(None),
+                Err(e) => {
+                    println!("{:?}", e);
+                    return Ok(None)
+                }
                 Ok(v) => v,
             }
         };
