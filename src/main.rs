@@ -16,6 +16,134 @@ pub mod codec;
 pub mod broker;
 pub mod client;
 
+use std::io;
+
+use mqtt3::*;
+use tokio_core::reactor::Core;
+use tokio_core::net::TcpListener;
+use tokio_io::AsyncRead;
+
+use futures::stream::Stream;
+use futures::Sink;
+use futures::Future;
+use futures::sync::mpsc;
+
+use client::Client;
+use broker::Broker;
+use codec::MqttCodec;
+use error::Error;
+
 fn main() {
-    broker::start().unwrap();
+    let mut core = Core::new().unwrap();
+    let handle = core.handle();
+    let address = "0.0.0.0:1883".parse().unwrap();
+    let listener = TcpListener::bind(&address, &core.handle()).unwrap();
+
+    let broker = Broker::new();
+
+    let welcomes = listener
+        .incoming()
+        .and_then(|(socket, addr)| {
+            let framed = socket.framed(MqttCodec);
+
+            let broker = broker.clone();
+
+            // Creates a 'Self' from stream, whose error match to that of and_then's closure
+            let handshake = framed.into_future()
+                                  .map_err(|(err, _)| err) // for accept errors, get error and discard the stream
+                                  .and_then(move |(packet,framed)| { // only accepted connections from here
+
+                let broker = broker.clone();
+
+                if let Some(Packet::Connect(c)) = packet {
+                    // TODO: Do connect packet validation here
+                    let (tx, rx) = mpsc::channel::<Packet>(8);
+
+                    let client = Client::new(&c.client_id, addr, tx.clone());
+                    broker.add_client(client.clone());
+
+                    Ok((framed, client, rx))
+                } else {
+                    Err(io::Error::new(io::ErrorKind::Other, "invalid handshake"))
+                }
+            });
+
+            handshake
+
+        });
+
+    let server = welcomes
+        .map(|w| Some(w))
+        .or_else(|_| Ok::<_, ()>(None))
+        .for_each(|handshake| {
+
+            let broker1 = broker.clone();
+            let broker2 = broker.clone();
+
+            // handle each connections n/w send and recv here
+            if let Some((framed, client, rx)) = handshake {
+                let id = client.id.clone();
+                let (sender, receiver) = framed.split();
+
+                let connack = Packet::Connack(Connack {
+                                                  session_present: false,
+                                                  code: ConnectReturnCode::Accepted,
+                                              });
+
+                let connack_tx = client.tx.clone();
+                let _ = connack_tx.send(connack).wait();
+
+                // current connections incoming n/w packets
+                let rx_future = receiver
+                    .for_each(move |msg| {
+                        match msg {
+                            Packet::Publish(p) => broker1.handle_publish(p, &client),
+                            Packet::Subscribe(s) => broker1.handle_subscribe(s, &client),
+                            Packet::Puback(pkid) => broker1.handle_puback(pkid, &client),
+                            Packet::Pubrec(pkid) => broker1.handle_pubrec(pkid, &client),
+                            Packet::Pubrel(pkid) => broker1.handle_pubrel(pkid, &client),
+                            Packet::Pubcomp(pkid) => broker1.handle_pubcomp(pkid, &client),
+                            Packet::Pingreq => broker1.handle_pingreq(&client),
+                            _ => println!("Incoming Misc: {:?}", msg),
+                        }
+                        Ok(())
+                    })
+                    .then(move |p| {
+                              // network disconnections. remove the client
+                              broker2.remove(&id);
+                              Ok(())
+                          });
+
+
+                //FIND: what happens to rx_future when socket disconnects
+                handle.spawn(rx_future);
+
+                // current connections outgoing n/w packets
+                let tx_future = rx.map_err(|_| Error::Other)
+                    .map(|r| match r {
+                             Packet::Publish(p) => Packet::Publish(p),
+                             Packet::Connack(c) => Packet::Connack(c),
+                             Packet::Suback(sa) => Packet::Suback(sa),
+                             Packet::Puback(pa) => Packet::Puback(pa),
+                             Packet::Pubrec(pr) => Packet::Pubrec(pr),
+                             Packet::Pubrel(pr) => {
+                        println!("@@@ {:?}", pr);
+                        Packet::Pubrel(pr)
+                    }
+                             Packet::Pubcomp(pc) => Packet::Pubcomp(pc),
+                             Packet::Pingresp => Packet::Pingresp,
+                             _ => panic!("Outgoing Misc: {:?}", r),
+                         })
+                    .forward(sender)
+                    .then(|_| {
+                              // forward error. n/w disconnections.
+                              Ok(())
+                          });
+
+                handle.spawn(tx_future);
+            }
+            Ok(())
+        });
+
+    core.run(server).unwrap();
 }
