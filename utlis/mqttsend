@@ -1,0 +1,26 @@
+#!/bin/bash
+
+BROKER=localhost
+PORT=1883
+
+if [ $# -ne 1 ]; then
+    echo "USAGE: ./mqttsend [connect | publish | subscribe | puback | pubrec | pubrel | pubcomp"
+    exit
+fi
+
+if [ $1 == "puback" ] 
+then
+    echo -e '\x40020001' | nc $BROKER $PORT
+elif [ $1 == "pubrec" ] 
+then
+    echo -e '\x50020001' | nc $BROKER $PORT
+elif [ $1 == "pubcomp" ] 
+then
+    echo -e '\x70020001' | nc $BROKER $PORT
+elif [ $1 == "pubrel" ]
+then
+    echo -e '\x62020001' | nc $BROKER $PORT
+else
+    echo "Invalid Packet. USAGE: ./mqttsend [connect | publish | subscribe | puback | pubrec | pubrel | pubcomp"
+    exit
+fi
