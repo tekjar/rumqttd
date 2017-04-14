@@ -57,7 +57,7 @@ fn main() {
 
                 if let Some(Packet::Connect(c)) = packet {
                     // TODO: Do connect packet validation here
-                    let (tx, rx) = mpsc::channel::<Packet>(8);
+                    let (tx, rx) = mpsc::channel::<Packet>(100);
 
                     let client = Client::new(&c.client_id, addr, tx.clone());
                     broker.add_client(client.clone());
@@ -82,7 +82,9 @@ fn main() {
 
             // handle each connections n/w send and recv here
             if let Some((framed, client, rx)) = handshake {
-                let id = client.id.clone();
+                let id1 = client.id.clone();
+                let id2 = client.id.clone();
+
                 let (sender, receiver) = framed.split();
 
                 let connack = Packet::Connack(Connack {
@@ -110,7 +112,8 @@ fn main() {
                     })
                     .then(move |p| {
                               // network disconnections. remove the client
-                              broker2.remove(&id);
+                              println!("%%%%%%%%%% CLIENT TX DISCONNECTION. ID = {:?} %%%%%%%%%%%%", id1);
+                              broker2.remove(&id1);
                               Ok(())
                           });
 
@@ -125,18 +128,16 @@ fn main() {
                              Packet::Connack(c) => Packet::Connack(c),
                              Packet::Suback(sa) => Packet::Suback(sa),
                              Packet::Puback(pa) => Packet::Puback(pa),
-                             Packet::Pubrec(pr) => Packet::Pubrec(pr),
-                             Packet::Pubrel(pr) => {
-                        println!("@@@ {:?}", pr);
-                        Packet::Pubrel(pr)
-                    }
+                             Packet::Pubrec(prec) => Packet::Pubrec(prec),
+                             Packet::Pubrel(prel) => Packet::Pubrel(prel),
                              Packet::Pubcomp(pc) => Packet::Pubcomp(pc),
                              Packet::Pingresp => Packet::Pingresp,
                              _ => panic!("Outgoing Misc: {:?}", r),
                          })
                     .forward(sender)
-                    .then(|_| {
+                    .then(move |_| {
                               // forward error. n/w disconnections.
+                              println!("%%%%%%%%%% CLIENT RX DISCONNECTION. ID = {:?} %%%%%%%%%%%%", id2);
                               Ok(())
                           });
 

@@ -10,6 +10,11 @@ use futures::{Future, Sink};
 
 use mqtt3::*;
 
+use slog::{Logger, Drain};
+use slog_term;
+use slog_async;
+
+#[derive(Debug)]
 pub struct ClientState {
     pub last_pkid: PacketIdentifier,
     /// For QoS 1. Stores outgoing publishes
@@ -41,22 +46,29 @@ pub struct Client {
     pub tx: Sender<Packet>,
 
     pub state: Rc<RefCell<ClientState>>,
+    logger: Logger,
 }
 
 impl Debug for Client {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, " [  id = {:?}, address = {:?}  ]", self.id, self.addr)
+        write!(f, " [  id = {:?}, address = {:?}\n ]", self.id, self.addr)
     }
 }
 
 impl Client {
     pub fn new(id: &str, addr: SocketAddr, tx: Sender<Packet>) -> Client {
         let state = ClientState::new();
+
+        let decorator = slog_term::TermDecorator::new().build();
+        let drain = slog_term::FullFormat::new(decorator).build().fuse();
+        let drain = slog_async::Async::new(drain).build().fuse();
+
         Client {
             addr: addr,
             id: id.to_string(),
             tx: tx,
-
+            logger: Logger::root(drain,
+                                 o!("client-id" => id.to_owned(), "version" => env!("CARGO_PKG_VERSION"))),
             state: Rc::new(RefCell::new(state)),
         }
     }
@@ -77,62 +89,75 @@ impl Client {
     pub fn store_publish(&self, publish: Box<Publish>) {
         let mut state = self.state.borrow_mut();
         state.outgoing_pub.push_back(publish.clone());
+        debug!(self.logger, "Stored PUBLISH")
     }
 
     pub fn remove_publish(&self, pkid: PacketIdentifier) -> Option<Box<Publish>> {
         let mut state = self.state.borrow_mut();
 
-        match state
-                  .outgoing_pub
-                  .iter()
-                  .position(|x| x.pid == Some(pkid)) {
-            Some(i) => state.outgoing_pub.remove(i),
-            None => None,
+        if let Some(index) = state
+               .outgoing_pub
+               .iter()
+               .position(|x| x.pid == Some(pkid)) {
+            state.outgoing_pub.remove(index)
+        } else {
+            error!(self.logger, "Unsolicited PUBLISH packet: {:?}", pkid);
+            None
         }
     }
 
     pub fn store_record(&self, publish: Box<Publish>) {
         let mut state = self.state.borrow_mut();
         state.outgoing_rec.push_back(publish.clone());
+        debug!(self.logger, "Stored RECORD");
     }
 
     pub fn remove_record(&self, pkid: PacketIdentifier) -> Option<Box<Publish>> {
         let mut state = self.state.borrow_mut();
 
-        match state
-                  .outgoing_pub
-                  .iter()
-                  .position(|x| x.pid == Some(pkid)) {
-            Some(i) => state.outgoing_rec.remove(i),
-            None => None,
+        if let Some(index) = state
+               .outgoing_rec
+               .iter()
+               .position(|x| x.pid == Some(pkid)) {
+            state.outgoing_rec.remove(index)
+        } else {
+            error!(self.logger, "Unsolicited RECORD packet: {:?}", pkid);
+            None
         }
     }
 
     pub fn store_rel(&self, pkid: PacketIdentifier) {
         let mut state = self.state.borrow_mut();
         state.outgoing_rel.push_back(pkid);
+        debug!(self.logger, "Stored RELEASE");
     }
 
     pub fn remove_rel(&self, pkid: PacketIdentifier) -> Option<PacketIdentifier> {
         let mut state = self.state.borrow_mut();
 
-        match state.outgoing_rel.iter().position(|x| *x == pkid) {
-            Some(i) => state.outgoing_rel.remove(i),
-            None => None,
+        if let Some(index) = state.outgoing_rel.iter().position(|x| *x == pkid) {
+            println!("### {:?}", state.outgoing_rel);
+            state.outgoing_rel.remove(index)
+        } else {
+            error!(self.logger, "Unsolicited RELEASE packet: {:?}", pkid);
+            None
         }
     }
 
     pub fn store_comp(&self, pkid: PacketIdentifier) {
         let mut state = self.state.borrow_mut();
         state.outgoing_comp.push_back(pkid);
+        debug!(self.logger, "Stored COMP");
     }
 
     pub fn remove_comp(&self, pkid: PacketIdentifier) -> Option<PacketIdentifier> {
         let mut state = self.state.borrow_mut();
 
-        match state.outgoing_comp.iter().position(|x| *x == pkid) {
-            Some(i) => state.outgoing_comp.remove(i),
-            None => None,
+        if let Some(index) = state.outgoing_comp.iter().position(|x| *x == pkid) {
+            state.outgoing_comp.remove(index)
+        } else {
+            error!(self.logger, "Unsolicited COMPLETE packet: {:?}", pkid);
+            None
         }
     }
 

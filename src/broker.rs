@@ -194,8 +194,6 @@ impl Broker {
                 let publish = client.publish_packet(&topic, qos.clone(), payload.clone(), false, false);
                 let packet = Packet::Publish(publish.clone());
 
-                debug!(self.logger, "Publish => {:?}. To client: {:?}", packet, client.id);
-                
                 match *qos {
                     QoS::AtLeastOnce => client.store_publish(publish),
                     QoS::ExactlyOnce => client.store_record(publish),
@@ -221,7 +219,8 @@ impl Broker {
                     // we should fwd only qos1 packets to all the subscribers (any qos) at this point
                     self.forward_to_subscribers(publish);
                 } else {
-                    error!(self.logger, "Ignoring publish packet. No pkid for QoS1 packet");
+                    error!(self.logger,
+                           "Ignoring publish packet. No pkid for QoS1 packet");
                 }
             }
             // save the qos2 packet and send pubrec
@@ -231,7 +230,8 @@ impl Broker {
                     let packet = Packet::Pubrec(pkid);
                     client.send(packet);
                 } else {
-                    error!(self.logger, "Ignoring record packet. No pkid for QoS2 packet");
+                    error!(self.logger,
+                           "Ignoring record packet. No pkid for QoS2 packet");
                 }
             }
         }
@@ -251,8 +251,6 @@ impl Broker {
             client.store_rel(record.pid.unwrap()); //TODO: Remove unwrap. Might be a problem if client behaves incorrectly
             let packet = Packet::Pubrel(pkid);
             client.send(packet);
-        } else {
-            error!(self.logger, "Unsolicited record packet");
         }
     }
 
