@@ -1,8 +1,8 @@
-use std::io::{self, Cursor};
+use std::io::{self, ErrorKind, Cursor};
 use bytes::BytesMut;
 use tokio_io::codec::{Encoder, Decoder};
 
-use mqtt3::{Packet, MqttWrite, MqttRead};
+use mqtt3::{Error, Packet, MqttWrite, MqttRead};
 
 pub struct MqttCodec;
 
@@ -15,15 +15,25 @@ impl Decoder for MqttCodec {
             let mut buf_ref = buf.as_ref();
             match buf_ref.read_packet_with_len() {
                 Err(e) => {
-                    println!("{:?}", e);
-                    return Ok(None)
+                    if let Error::Io(e) = e {
+                        match e.kind() {
+                            ErrorKind::TimedOut | ErrorKind::WouldBlock => return Ok(None),
+                            _ => {
+                                println!("* {:?}", e);
+                                return Err(io::Error::new(ErrorKind::Other, "Invalid Mqtt Frame"));
+                            }
+                        }
+                    } else {
+                        println!("** {:?}", e);
+                        return Err(io::Error::new(ErrorKind::Other, "Invalid Mqtt Frame"));
+                    }
                 }
                 Ok(v) => v,
             }
         };
 
         buf.split_to(len);
-        // println!("{:?}, {:?}", len, packet);
+        println!("{:?}, {:?}", len, packet);
         Ok(Some(packet))
     }
 }
