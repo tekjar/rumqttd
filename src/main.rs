@@ -18,11 +18,13 @@ pub mod client;
 
 use std::io;
 use std::sync::Arc;
+use std::time::Duration;
 
 use mqtt3::*;
 use tokio_core::reactor::Core;
 use tokio_core::net::TcpListener;
 use tokio_io::AsyncRead;
+use tokio_timer::{Timer, Interval};
 
 use futures::stream::Stream;
 use futures::Future;
@@ -104,6 +106,17 @@ fn main() {
                                               });
 
                 let _ = client.send(connack);
+
+                let timer = Timer::default();
+                let interval = timer.interval(Duration::new(10, 0));
+
+                let timer_future = interval.for_each(|_| {
+                    //TODO: check for ping requests here
+                    println!("!!!!!");
+                    Ok(())
+                }).then(|_| Ok(()));
+
+                handle.spawn(timer_future);
 
                 // current connections incoming n/w packets
                 let rx_future = receiver
