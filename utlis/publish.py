@@ -9,8 +9,8 @@ client = mqtt.Client()
 
 client.connect(BROKER, PORT, KEEP_ALIVE)
 
-for i in range(100):
+for i in range(1000):
     client.publish("hello/mqtt", "hello mqtt", False)
-    time.sleep(10)
+    time.sleep(1)
 
 client.loop_forever()

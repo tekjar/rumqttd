@@ -36,9 +36,24 @@ var publish = {
 
 var puback = {
   cmd: 'puback',
-  messageId: 1000
+  messageId: 1
 }
 // console.log('puback: ',  mqtt.generate(puback))
+
+var pubrec = {
+  cmd: 'pubrec',
+  messageId: 1
+}
+
+var pubrel = {
+  cmd: 'pubrel',
+  messageId: 1
+}
+
+var pubcomp = {
+  cmd: 'pubcomp',
+  messageId: 1
+}
 
 var subscribe = {
   cmd: 'subscribe',
@@ -68,19 +83,35 @@ var suback = {
 var client = new net.Socket();
 
 client.connect(1883, '127.0.0.1', function () {
-  
+
   process.argv.slice(2).forEach(function (val, index, array) {
     switch (val) {
       case 'connack':
         client.write(mqtt.generate(connack));
+        break;
       case 'connect':
         client.write(mqtt.generate(connect));
+        client.write(mqtt.generate(publish));
+        break;
+      case 'puback':
+        client.write(mqtt.generate(puback));
+        break;
+      case 'pubrec':
+        client.write(mqtt.generate(pubrec));
+        break;
+      case 'pubrel':
+        client.write(mqtt.generate(pubrel));
+        break;
+      case 'pubcomp':
+        client.write(mqtt.generate(pubcomp));
+        break;
     }
   });
 });
 
-setTimeout(function() {
+setTimeout(function () {
   console.log('hello world!');
 }, 5000);
 
-client.destroy();
+// client.end();
+client.s

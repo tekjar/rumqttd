@@ -24,7 +24,6 @@ use tokio_core::net::TcpListener;
 use tokio_io::AsyncRead;
 
 use futures::stream::Stream;
-use futures::Sink;
 use futures::Future;
 use futures::sync::mpsc;
 
@@ -92,8 +91,7 @@ fn main() {
                                                   code: ConnectReturnCode::Accepted,
                                               });
 
-                let connack_tx = client.tx.clone();
-                let _ = connack_tx.send(connack).wait();
+                let _ = client.send(connack);
 
                 // current connections incoming n/w packets
                 let rx_future = receiver
@@ -106,17 +104,16 @@ fn main() {
                             Packet::Pubrel(pkid) => broker1.handle_pubrel(pkid, &client),
                             Packet::Pubcomp(pkid) => broker1.handle_pubcomp(pkid, &client),
                             Packet::Pingreq => broker1.handle_pingreq(&client),
-                            _ => println!("Incoming Misc: {:?}", msg),
+                            _ => panic!("Incoming Misc: {:?}", msg),
                         }
                         Ok(())
                     })
-                    .then(move |p| {
+                    .then(move |e| {
                               // network disconnections. remove the client
-                              println!("%%%%%%%%%% CLIENT TX DISCONNECTION. ID = {:?} %%%%%%%%%%%%", id1);
+                              println!("%%% ERROR = {:?}. TX DISCONNECTION. ID = {:?} %%%", e, id1);
                               broker2.remove(&id1);
                               Ok(())
                           });
-
 
                 //FIND: what happens to rx_future when socket disconnects
                 handle.spawn(rx_future);
@@ -137,7 +134,7 @@ fn main() {
                     .forward(sender)
                     .then(move |_| {
                               // forward error. n/w disconnections.
-                              println!("%%%%%%%%%% CLIENT RX DISCONNECTION. ID = {:?} %%%%%%%%%%%%", id2);
+                              println!("%%% RX DISCONNECTION. ID = {:?} %%%", id2);
                               Ok(())
                           });
 

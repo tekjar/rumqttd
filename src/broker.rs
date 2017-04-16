@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 use std::rc::Rc;
-
+use std::sync::Arc;
 use std::collections::{VecDeque, HashMap};
 use std::fmt::{self, Debug};
 
@@ -48,7 +48,7 @@ pub struct Broker {
 impl Broker {
     pub fn new() -> Self {
         let decorator = slog_term::TermDecorator::new().build();
-        let drain = slog_term::FullFormat::new(decorator).build().fuse();
+        let drain = slog_term::CompactFormat::new(decorator).build().fuse();
         let drain = slog_async::Async::new(drain).build().fuse();
 
         let state = BrokerState::new();
@@ -57,7 +57,7 @@ impl Broker {
             clients: Rc::new(RefCell::new(HashMap::new())),
             subscriptions: Rc::new(RefCell::new(HashMap::new())),
             state: Rc::new(RefCell::new(state)),
-            logger: Logger::root(drain, o!("version" => env!("CARGO_PKG_VERSION"))),
+            logger: Logger::root(Arc::new(drain), o!("version" => env!("CARGO_PKG_VERSION"))),
         }
     }
 
@@ -197,7 +197,7 @@ impl Broker {
                 match *qos {
                     QoS::AtLeastOnce => client.store_publish(publish),
                     QoS::ExactlyOnce => client.store_record(publish),
-                    _ => (), 
+                    _ => (),
                 }
 
                 client.send(packet);
@@ -235,8 +235,6 @@ impl Broker {
                 }
             }
         }
-
-        debug!(self.logger, "{:?}", self);
     }
 
     pub fn handle_puback(&self, pkid: PacketIdentifier, client: &Client) {
@@ -245,6 +243,7 @@ impl Broker {
 
     pub fn handle_pubrec(&self, pkid: PacketIdentifier, client: &Client) {
         debug!(self.logger, "PubRec <= {:?}", pkid);
+
         // remove record packet from state queues
         if let Some(record) = client.remove_record(pkid) {
             // record and send pubrel packet
@@ -286,7 +285,7 @@ impl Broker {
                     match *qos {
                         QoS::AtLeastOnce => client.store_publish(publish),
                         QoS::ExactlyOnce => client.store_record(publish),
-                        _ => (), 
+                        _ => (),
                     }
 
                     client.send(packet);

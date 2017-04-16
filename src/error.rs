@@ -17,11 +17,15 @@ quick_error! {
         }
         Mqtt3(err: mqtt3::Error) {
             from()
-        }      
+            display("mqtt3 error: {}", err)
+            description("Mqtt3 error {}")
+            cause(err)
+        }
         Timer(err: TimerError) {
             from()
             description("Timer error")
             cause(err)
+            display("timer error: {}", err)
         }
         Other
     }

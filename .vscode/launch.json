@@ -1,0 +1,12 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "gdb",
+            "request": "launch",
+            "name": "Attach to PID",
+            "target": "/Users/raviteja/Desktop/rumqttd/target/debug/rumqttd",
+            "cwd": "${workspaceRoot}"
+        }
+    ]
+}
