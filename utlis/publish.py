@@ -11,6 +11,6 @@ client.connect(BROKER, PORT, KEEP_ALIVE)
 
 for i in range(1000):
     client.publish("hello/mqtt", "hello mqtt", False)
-    time.sleep(1)
+    time.sleep(0.10)
 
 client.loop_forever()

@@ -39,9 +39,18 @@ impl Decoder for MqttCodec {
             }
         };
 
-        buf.split_to(len);
+        // NOTE: It's possible that `decode` got called before `buf` has full bytes
+        // necessary to frame raw bytes into a packet. In that case return Ok(None)
+        // and the next time decode` gets called, there will be more bytes in `buf`,
+        // hopefully enough to frame the packet
+        if buf.len() < len {
+            return Ok(None)
+        }
 
         // println!("{:?}, {:?}, {:?}", len, packet, buf.len());
+
+        buf.split_to(len);
+
         Ok(Some(packet))
     }
 }
