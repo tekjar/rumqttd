@@ -17,6 +17,7 @@ pub mod broker;
 pub mod client;
 
 use std::io;
+use std::sync::Arc;
 
 use mqtt3::*;
 use tokio_core::reactor::Core;
@@ -27,6 +28,8 @@ use futures::stream::Stream;
 use futures::Future;
 use futures::sync::mpsc;
 
+use slog::{Logger, Drain};
+
 use client::Client;
 use broker::Broker;
 use codec::MqttCodec;
@@ -36,6 +39,12 @@ fn main() {
     let mut core = Core::new().unwrap();
     let handle = core.handle();
     let address = "0.0.0.0:1883".parse().unwrap();
+
+    let decorator = slog_term::TermDecorator::new().build();
+    let drain = slog_term::CompactFormat::new(decorator).build().fuse();
+    let drain = slog_async::Async::new(drain).build().fuse();
+    let logger = Logger::root(Arc::new(drain), o!("version" => env!("CARGO_PKG_VERSION")));
+
     let listener = TcpListener::bind(&address, &core.handle()).unwrap();
 
     let broker = Broker::new();
@@ -63,7 +72,7 @@ fn main() {
 
                     Ok((framed, client, rx))
                 } else {
-                    Err(io::Error::new(io::ErrorKind::Other, "invalid handshake"))
+                    Err(io::Error::new(io::ErrorKind::Other, "Invalid Handshake Packet"))
                 }
             });
 
@@ -73,7 +82,10 @@ fn main() {
 
     let server = welcomes
         .map(|w| Some(w))
-        .or_else(|_| Ok::<_, ()>(None))
+        .or_else(|e| {
+            error!(logger, "{:?}", e);
+            Ok::<_, ()>(None)
+        })
         .for_each(|handshake| {
 
             let broker1 = broker.clone();
