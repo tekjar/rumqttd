@@ -25,7 +25,7 @@ pub struct BrokerState {
 }
 
 impl BrokerState {
-    pub fn new() -> Self {
+    fn new() -> Self {
         BrokerState {
             incoming_pub: VecDeque::new(),
             incoming_rec: VecDeque::new(),
@@ -61,16 +61,21 @@ impl Broker {
         }
     }
 
+    /// Adds a new client to the broker
     pub fn add_client(&self, client: Client) {
         self.clients
             .borrow_mut()
             .insert(client.id.clone(), client);
     }
 
-    pub fn add_subscription(&self, topic: SubscribeTopic, client: Client) {
+    /// Adds client to a subscription. If the subscription doesn't exist,
+    /// new subscription is created and the client will be added to it
+    fn add_subscription_client(&self, topic: SubscribeTopic, client: Client) {
         let mut subscriptions = self.subscriptions.borrow_mut();
         let clients = subscriptions.entry(topic).or_insert(Vec::new());
 
+        // add client to a subscription only if it doesn't already exist or
+        // else replace the existing one
         if let Some(index) = clients.iter().position(|v| v.id == client.id) {
             clients.insert(index, client);
         } else {
@@ -78,7 +83,19 @@ impl Broker {
         }
     }
 
-    pub fn get_subscribed_clients(&self, topic: SubscribeTopic) -> Vec<Client> {
+    /// Remove a client from a subscription
+    pub fn remove_subscription_client(&self, topic: SubscribeTopic, id: &str) {
+        let mut subscriptions = self.subscriptions.borrow_mut();
+
+        if let Some(clients) = subscriptions.get_mut(&topic) {
+            if let Some(index) = clients.iter().position(|v| v.id == id) {
+                clients.remove(index);
+            }
+        }
+    }
+
+    /// Get the list of clients for a given subscription
+    fn get_subscribed_clients(&self, topic: SubscribeTopic) -> Vec<Client> {
         let subscriptions = self.subscriptions.borrow_mut();
 
         if let Some(v) = subscriptions.get(&topic) {
@@ -88,14 +105,17 @@ impl Broker {
         }
     }
 
-    pub fn remove(&self, id: &str) {
+    // Remove the client from broker (including subscriptions)
+    pub fn remove_client(&self, id: &str) {
         self.clients.borrow_mut().remove(id);
 
-        // let subscriptions = self.clients.borrow_mut();
+        let mut subscriptions = self.subscriptions.borrow_mut();
 
-        // for s in subscriptions.values() {
-
-        // }
+        for clients in subscriptions.values_mut() {
+            if let Some(index) = clients.iter().position(|v| v.id == id) {
+                clients.remove(index);
+            }
+        }
     }
 
     // TODO: Find out if broker should drop message if a new massage with existing
@@ -168,7 +188,7 @@ impl Broker {
 
         // Add current client's id to this subscribe topic
         for topic in subscribe.topics {
-            self.add_subscription(topic.clone(), client.clone());
+            self.add_subscription_client(topic.clone(), client.clone());
             return_codes.push(SubscribeReturnCodes::Success(topic.qos));
         }
 
@@ -177,7 +197,7 @@ impl Broker {
         client.send(packet);
     }
 
-    pub fn forward_to_subscribers(&self, publish: Box<Publish>) {
+    fn forward_to_subscribers(&self, publish: Box<Publish>) {
         let topic = publish.topic_name.clone();
         let payload = publish.payload.clone();
 
@@ -291,8 +311,6 @@ impl Broker {
                     client.send(packet);
                 }
             }
-        } else {
-            // error!("Dropping. Unsolicited record");
         }
     }
 
@@ -310,4 +328,118 @@ impl Debug for Broker {
                self.subscriptions.borrow(),
                self.state.borrow())
     }
+}
+
+#[cfg(test)]
+mod test {
+    use std::sync::Arc;
+    use futures::sync::mpsc::{self, Receiver};
+    use client::Client;
+    use super::Broker;
+    use mqtt3::*;
+
+    fn mock_client(id: &str) -> (Client, Receiver<Packet>) {
+        let (tx, rx) = mpsc::channel::<Packet>(8);
+        (Client::new(id, "127.0.0.1:80".parse().unwrap(), tx), rx)
+    }
+
+    #[test]
+    fn add_and_remove_clients_to_the_broker() {
+        let (c1, ..) = mock_client("mock-client-1");
+        let (c2, ..) = mock_client("mock-client-2");
+        let (c3, ..) = mock_client("mock-client-3");
+
+        let broker = Broker::new();
+        broker.add_client(c1);
+        broker.add_client(c2);
+        broker.add_client(c3);
+
+        {
+            let clients = broker.clients.borrow();
+            assert_eq!(clients.contains_key("mock-client-1"), true);
+            assert_eq!(clients.contains_key("mock-client-2"), true);
+            assert_eq!(clients.contains_key("mock-client-3"), true);
+        }
+
+        broker.remove_client("mock-client-2");
+
+        {
+            let clients = broker.clients.borrow();
+            assert_eq!(clients.contains_key("mock-client-1"), true);
+            assert_eq!(clients.contains_key("mock-client-2"), false);
+            assert_eq!(clients.contains_key("mock-client-3"), true);
+        }
+    }
+
+    #[test]
+    fn add_and_remove_subscriptions_to_the_broker() {
+        let (c1, ..) = mock_client("mock-client-1");
+        let (c2, ..) = mock_client("mock-client-2");
+
+        let s1 = SubscribeTopic {
+            topic_path: "hello/mqtt".to_owned(),
+            qos: QoS::AtMostOnce,
+        };
+        let s2 = SubscribeTopic {
+            topic_path: "hello/mqtt".to_owned(),
+            qos: QoS::AtLeastOnce,
+        };
+        let s3 = SubscribeTopic {
+            topic_path: "hello/mqtt".to_owned(),
+            qos: QoS::ExactlyOnce,
+        };
+        let s4 = SubscribeTopic {
+            topic_path: "hello/rumqttd".to_owned(),
+            qos: QoS::AtLeastOnce,
+        };
+        let s5 = SubscribeTopic {
+            topic_path: "hello/rumqttd".to_owned(),
+            qos: QoS::ExactlyOnce,
+        };
+
+        let broker = Broker::new();
+
+        // add c1 to to s1, s2, s3 & s4
+        broker.add_subscription_client(s1.clone(), c1.clone());
+        broker.add_subscription_client(s2.clone(), c1.clone());
+        broker.add_subscription_client(s3.clone(), c1.clone());
+        broker.add_subscription_client(s4.clone(), c1.clone());
+
+        // add c2 to s2 & s5
+        broker.add_subscription_client(s2.clone(), c2.clone());
+        broker.add_subscription_client(s5.clone(), c2.clone());
+
+        // verify clients in s1
+        let clients = broker.get_subscribed_clients(s1.clone());
+        assert_eq!(clients.len(), 1);
+        assert_eq!(clients.get(0).unwrap().id, "mock-client-1");
+
+        // verify clients in s2
+        let clients = broker.get_subscribed_clients(s2.clone());
+        assert_eq!(clients.len(), 2);
+        assert_eq!(clients.get(0).unwrap().id, "mock-client-1");
+        assert_eq!(clients.get(1).unwrap().id, "mock-client-2");
+
+        // verify clients in s5
+        let clients = broker.get_subscribed_clients(s5.clone());
+        assert_eq!(clients.len(), 1);
+        assert_eq!(clients.get(0).unwrap().id, "mock-client-2");
+
+        // remove c1 from s2 and verify clients
+        broker.remove_subscription_client(s2.clone(), &c1.id);
+        let clients = broker.get_subscribed_clients(s2.clone());
+        assert_eq!(clients.len(), 1);
+        assert_eq!(clients.get(0).unwrap().id, "mock-client-2");
+
+        // remove c1 & c2 from all subscriptions and verify clients
+        broker.remove_client(&c1.id);
+        broker.remove_client(&c2.id);
+
+        for s in [s1, s2, s3, s4, s5].iter() {
+            let clients = broker.get_subscribed_clients(s.clone());
+            assert_eq!(clients.len(), 0);
+        }
+
+    }
+
 }

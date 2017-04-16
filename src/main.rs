@@ -111,7 +111,7 @@ fn main() {
                     .then(move |e| {
                               // network disconnections. remove the client
                               println!("%%% ERROR = {:?}. TX DISCONNECTION. ID = {:?} %%%", e, id1);
-                              broker2.remove(&id1);
+                              broker2.remove_client(&id1);
                               Ok(())
                           });
 
