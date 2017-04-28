@@ -17,14 +17,14 @@ pub mod broker;
 pub mod client;
 
 use std::io;
+use std::io::ErrorKind;
 use std::sync::Arc;
 use std::time::Duration;
 
 use mqtt3::*;
-use tokio_core::reactor::Core;
+use tokio_core::reactor::{Core, Interval};
 use tokio_core::net::TcpListener;
 use tokio_io::AsyncRead;
-use tokio_timer::{Timer, Interval};
 
 use futures::stream::Stream;
 use futures::Future;
@@ -85,19 +85,17 @@ fn main() {
     let server = welcomes
         .map(|w| Some(w))
         .or_else(|e| {
-            error!(logger, "{:?}", e);
-            Ok::<_, ()>(None)
-        })
+                     error!(logger, "{:?}", e);
+                     Ok::<_, ()>(None)
+                 })
         .for_each(|handshake| {
 
-            let broker1 = broker.clone();
+            let broker = broker.clone();
             let broker2 = broker.clone();
 
             // handle each connections n/w send and recv here
             if let Some((framed, client, rx)) = handshake {
-                let id1 = client.id.clone();
-                let id2 = client.id.clone();
-
+                let id = client.id.clone();
                 let (sender, receiver) = framed.split();
 
                 let connack = Packet::Connack(Connack {
@@ -107,41 +105,33 @@ fn main() {
 
                 let _ = client.send(connack);
 
-                let timer = Timer::default();
-                let interval = timer.interval(Duration::new(10, 0));
-
-                let timer_future = interval.for_each(|_| {
-                    //TODO: check for ping requests here
-                    println!("!!!!!");
-                    Ok(())
-                }).then(|_| Ok(()));
-
-                handle.spawn(timer_future);
-
                 // current connections incoming n/w packets
                 let rx_future = receiver
                     .for_each(move |msg| {
                         match msg {
-                            Packet::Publish(p) => broker1.handle_publish(p, &client),
-                            Packet::Subscribe(s) => broker1.handle_subscribe(s, &client),
-                            Packet::Puback(pkid) => broker1.handle_puback(pkid, &client),
-                            Packet::Pubrec(pkid) => broker1.handle_pubrec(pkid, &client),
-                            Packet::Pubrel(pkid) => broker1.handle_pubrel(pkid, &client),
-                            Packet::Pubcomp(pkid) => broker1.handle_pubcomp(pkid, &client),
-                            Packet::Pingreq => broker1.handle_pingreq(&client),
+                            Packet::Publish(p) => broker.handle_publish(p, &client),
+                            Packet::Subscribe(s) => broker.handle_subscribe(s, &client),
+                            Packet::Puback(pkid) => broker.handle_puback(pkid, &client),
+                            Packet::Pubrec(pkid) => broker.handle_pubrec(pkid, &client),
+                            Packet::Pubrel(pkid) => broker.handle_pubrel(pkid, &client),
+                            Packet::Pubcomp(pkid) => broker.handle_pubcomp(pkid, &client),
+                            Packet::Pingreq => broker.handle_pingreq(&client),
                             _ => panic!("Incoming Misc: {:?}", msg),
                         }
                         Ok(())
                     })
-                    .then(move |e| {
-                              // network disconnections. remove the client
-                              println!("%%% ERROR = {:?}. TX DISCONNECTION. ID = {:?} %%%", e, id1);
-                              broker2.remove_client(&id1);
+                    .then(move |e| -> ::std::result::Result<(), ()> {
+                              println!("{:?}", e);
                               Ok(())
                           });
 
-                //FIND: what happens to rx_future when socket disconnects
-                handle.spawn(rx_future);
+                let interval = Interval::new(Duration::new(5, 0), &handle).unwrap();
+
+                let timer_future = interval
+                    .for_each(|_| { return Err(io::Error::new(ErrorKind::Other, "Ping Timer Error")); })
+                    .then(|_| -> ::std::result::Result<(), ()> { Ok(()) });
+
+                let rx_future = timer_future.select(rx_future);
 
                 // current connections outgoing n/w packets
                 let tx_future = rx.map_err(|_| Error::Other)
@@ -157,13 +147,22 @@ fn main() {
                              _ => panic!("Outgoing Misc: {:?}", r),
                          })
                     .forward(sender)
-                    .then(move |_| {
+                    .then(move |_| -> ::std::result::Result<(), ()> {
                               // forward error. n/w disconnections.
-                              println!("%%% RX DISCONNECTION. ID = {:?} %%%", id2);
+                              println!("%%% RX DISCONNECTION");
                               Ok(())
                           });
 
-                handle.spawn(tx_future);
+                let rx_future = rx_future.then(|_| Ok(()));
+
+                let connection = rx_future.select(tx_future);
+                let connection = connection.then(move |_| {
+                                                     println!("Disconnecting client: {:?}", id);
+                                                     broker2.remove_client(&id);
+                                                     Ok(())
+                                                 });
+
+                handle.spawn(connection);
             }
             Ok(())
         });

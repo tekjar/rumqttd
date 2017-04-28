@@ -44,7 +44,7 @@ impl Decoder for MqttCodec {
         // and the next time decode` gets called, there will be more bytes in `buf`,
         // hopefully enough to frame the packet
         if buf.len() < len {
-            return Ok(None)
+            return Ok(None);
         }
 
         // println!("{:?}, {:?}, {:?}", len, packet, buf.len());
