@@ -128,10 +128,9 @@ impl Broker {
     pub fn remove_publish(&self, pkid: PacketIdentifier) -> Option<Box<Publish>> {
         let mut state = self.state.borrow_mut();
 
-        match state
-                  .incoming_pub
-                  .iter()
-                  .position(|x| x.pid == Some(pkid)) {
+        match state.incoming_pub
+                   .iter()
+                   .position(|x| x.pid == Some(pkid)) {
             Some(i) => state.incoming_pub.remove(i),
             None => None,
         }
@@ -145,10 +144,9 @@ impl Broker {
     pub fn remove_record(&self, pkid: PacketIdentifier) -> Option<Box<Publish>> {
         let mut state = self.state.borrow_mut();
 
-        match state
-                  .incoming_pub
-                  .iter()
-                  .position(|x| x.pid == Some(pkid)) {
+        match state.incoming_pub
+                   .iter()
+                   .position(|x| x.pid == Some(pkid)) {
             Some(i) => state.incoming_rec.remove(i),
             None => None,
         }

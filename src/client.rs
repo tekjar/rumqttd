@@ -94,10 +94,9 @@ impl Client {
     pub fn remove_publish(&self, pkid: PacketIdentifier) -> Option<Box<Publish>> {
         let mut state = self.state.borrow_mut();
 
-        if let Some(index) = state
-               .outgoing_pub
-               .iter()
-               .position(|x| x.pid == Some(pkid)) {
+        if let Some(index) = state.outgoing_pub
+                                  .iter()
+                                  .position(|x| x.pid == Some(pkid)) {
             state.outgoing_pub.remove(index)
         } else {
             error!(self.logger, "Unsolicited PUBLISH packet: {:?}", pkid);
@@ -113,10 +112,9 @@ impl Client {
     pub fn remove_record(&self, pkid: PacketIdentifier) -> Option<Box<Publish>> {
         let mut state = self.state.borrow_mut();
 
-        if let Some(index) = state
-               .outgoing_rec
-               .iter()
-               .position(|x| x.pid == Some(pkid)) {
+        if let Some(index) = state.outgoing_rec
+                                  .iter()
+                                  .position(|x| x.pid == Some(pkid)) {
             state.outgoing_rec.remove(index)
         } else {
             error!(self.logger, "Unsolicited RECORD packet: {:?}", pkid);
@@ -254,10 +252,9 @@ mod test {
             let state = client.state.borrow_mut();
 
             for i in 0..10 {
-                let index = state
-                    .outgoing_pub
-                    .iter()
-                    .position(|x| x.pid == Some(PacketIdentifier(i)));
+                let index = state.outgoing_pub
+                                 .iter()
+                                 .position(|x| x.pid == Some(PacketIdentifier(i)));
                 assert_eq!(index, None);
             }
 
@@ -272,10 +269,9 @@ mod test {
             // to make sure that the following client methods doesn't panic
             let state = client.state.borrow_mut();
             for i in 10..90 {
-                let index = state
-                    .outgoing_pub
-                    .iter()
-                    .position(|x| x.pid == Some(PacketIdentifier(i)));
+                let index = state.outgoing_pub
+                                 .iter()
+                                 .position(|x| x.pid == Some(PacketIdentifier(i)));
                 assert_eq!(index, None);
             }
         }
@@ -291,10 +287,9 @@ mod test {
             let mut expected_index = 0;
 
             for i in [90, 92, 94, 96, 98].iter() {
-                let index = state
-                    .outgoing_pub
-                    .iter()
-                    .position(|x| x.pid == Some(PacketIdentifier(*i)));
+                let index = state.outgoing_pub
+                                 .iter()
+                                 .position(|x| x.pid == Some(PacketIdentifier(*i)));
                 assert_eq!(index, Some(expected_index));
                 expected_index += 1;
             }

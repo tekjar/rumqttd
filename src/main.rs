@@ -51,15 +51,14 @@ fn main() {
 
     let broker = Broker::new();
 
-    let welcomes = listener
-        .incoming()
-        .and_then(|(socket, addr)| {
-            let framed = socket.framed(MqttCodec);
+    let welcomes = listener.incoming()
+                           .and_then(|(socket, addr)| {
+        let framed = socket.framed(MqttCodec);
 
-            let broker = broker.clone();
+        let broker = broker.clone();
 
-            // Creates a 'Self' from stream, whose error match to that of and_then's closure
-            let handshake = framed.into_future()
+        // Creates a 'Self' from stream, whose error match to that of and_then's closure
+        let handshake = framed.into_future()
                                   .map_err(|(err, _)| err) // for accept errors, get error and discard the stream
                                   .and_then(move |(packet,framed)| { // only accepted connections from here
 
@@ -78,94 +77,91 @@ fn main() {
                 }
             });
 
-            handshake
+        handshake
 
-        });
+    });
 
-    let server = welcomes
-        .map(|w| Some(w))
-        .or_else(|e| {
-                     error!(logger, "{:?}", e);
-                     Ok::<_, ()>(None)
-                 })
-        .for_each(|handshake| {
+    let server = welcomes.map(|w| Some(w))
+                         .or_else(|e| {
+                                      error!(logger, "{:?}", e);
+                                      Ok::<_, ()>(None)
+                                  })
+                         .for_each(|handshake| {
 
-            let broker = broker.clone();
-            let broker2 = broker.clone();
+        let broker = broker.clone();
+        let broker2 = broker.clone();
 
-            // handle each connections n/w send and recv here
-            if let Some((framed, client, rx)) = handshake {
-                let id = client.id.clone();
-                let (sender, receiver) = framed.split();
+        // handle each connections n/w send and recv here
+        if let Some((framed, client, rx)) = handshake {
+            let id = client.id.clone();
+            let (sender, receiver) = framed.split();
 
-                let connack = Packet::Connack(Connack {
-                                                  session_present: false,
-                                                  code: ConnectReturnCode::Accepted,
-                                              });
+            let connack = Packet::Connack(Connack {
+                                              session_present: false,
+                                              code: ConnectReturnCode::Accepted,
+                                          });
 
-                let _ = client.send(connack);
+            let _ = client.send(connack);
 
-                // current connections incoming n/w packets
-                let rx_future = receiver
-                    .for_each(move |msg| {
-                        match msg {
-                            Packet::Publish(p) => broker.handle_publish(p, &client),
-                            Packet::Subscribe(s) => broker.handle_subscribe(s, &client),
-                            Packet::Puback(pkid) => broker.handle_puback(pkid, &client),
-                            Packet::Pubrec(pkid) => broker.handle_pubrec(pkid, &client),
-                            Packet::Pubrel(pkid) => broker.handle_pubrel(pkid, &client),
-                            Packet::Pubcomp(pkid) => broker.handle_pubcomp(pkid, &client),
-                            Packet::Pingreq => broker.handle_pingreq(&client),
-                            _ => panic!("Incoming Misc: {:?}", msg),
-                        }
-                        Ok(())
-                    })
-                    .then(move |e| -> ::std::result::Result<(), ()> {
-                              println!("{:?}", e);
-                              Ok(())
-                          });
+            // current connections incoming n/w packets
+            let rx_future = receiver.for_each(move |msg| {
+                match msg {
+                    Packet::Publish(p) => broker.handle_publish(p, &client),
+                    Packet::Subscribe(s) => broker.handle_subscribe(s, &client),
+                    Packet::Puback(pkid) => broker.handle_puback(pkid, &client),
+                    Packet::Pubrec(pkid) => broker.handle_pubrec(pkid, &client),
+                    Packet::Pubrel(pkid) => broker.handle_pubrel(pkid, &client),
+                    Packet::Pubcomp(pkid) => broker.handle_pubcomp(pkid, &client),
+                    Packet::Pingreq => broker.handle_pingreq(&client),
+                    _ => panic!("Incoming Misc: {:?}", msg),
+                }
+                Ok(())
+            }).then(move |e| {
+                println!("{:?}", e);
+                Ok::<_, ()>(())
+            });
 
-                let interval = Interval::new(Duration::new(5, 0), &handle).unwrap();
+            let interval = Interval::new(Duration::new(5, 0), &handle).unwrap();
 
-                let timer_future = interval
-                    .for_each(|_| { return Err(io::Error::new(ErrorKind::Other, "Ping Timer Error")); })
-                    .then(|_| -> ::std::result::Result<(), ()> { Ok(()) });
+            let timer_future =
+                interval.for_each(|_| { return Err(io::Error::new(ErrorKind::Other, "Ping Timer Error")); })
+                        .then(|_| Ok(()));
 
-                let rx_future = timer_future.select(rx_future);
+            let rx_future = timer_future.select(rx_future);
 
-                // current connections outgoing n/w packets
-                let tx_future = rx.map_err(|_| Error::Other)
-                    .map(|r| match r {
-                             Packet::Publish(p) => Packet::Publish(p),
-                             Packet::Connack(c) => Packet::Connack(c),
-                             Packet::Suback(sa) => Packet::Suback(sa),
-                             Packet::Puback(pa) => Packet::Puback(pa),
-                             Packet::Pubrec(prec) => Packet::Pubrec(prec),
-                             Packet::Pubrel(prel) => Packet::Pubrel(prel),
-                             Packet::Pubcomp(pc) => Packet::Pubcomp(pc),
-                             Packet::Pingresp => Packet::Pingresp,
-                             _ => panic!("Outgoing Misc: {:?}", r),
-                         })
-                    .forward(sender)
-                    .then(move |_| -> ::std::result::Result<(), ()> {
-                              // forward error. n/w disconnections.
-                              println!("%%% RX DISCONNECTION");
-                              Ok(())
-                          });
+            // current connections outgoing n/w packets
+            let tx_future = rx.map_err(|_| Error::Other)
+                              .map(|r| match r {
+                                       Packet::Publish(p) => Packet::Publish(p),
+                                       Packet::Connack(c) => Packet::Connack(c),
+                                       Packet::Suback(sa) => Packet::Suback(sa),
+                                       Packet::Puback(pa) => Packet::Puback(pa),
+                                       Packet::Pubrec(prec) => Packet::Pubrec(prec),
+                                       Packet::Pubrel(prel) => Packet::Pubrel(prel),
+                                       Packet::Pubcomp(pc) => Packet::Pubcomp(pc),
+                                       Packet::Pingresp => Packet::Pingresp,
+                                       _ => panic!("Outgoing Misc: {:?}", r),
+                                   })
+                              .forward(sender)
+                              .then(move |_| -> ::std::result::Result<(), ()> {
+                                        // forward error. n/w disconnections.
+                                        println!("%%% RX DISCONNECTION");
+                                        Ok(())
+                                    });
 
-                let rx_future = rx_future.then(|_| Ok(()));
+            let rx_future = rx_future.then(|_| Ok(()));
 
-                let connection = rx_future.select(tx_future);
-                let connection = connection.then(move |_| {
-                                                     println!("Disconnecting client: {:?}", id);
-                                                     broker2.remove_client(&id);
-                                                     Ok(())
-                                                 });
+            let connection = rx_future.select(tx_future);
+            let connection = connection.then(move |_| {
+                                                 println!("Disconnecting client: {:?}", id);
+                                                 broker2.remove_client(&id);
+                                                 Ok(())
+                                             });
 
-                handle.spawn(connection);
-            }
-            Ok(())
-        });
+            handle.spawn(connection);
+        }
+        Ok(())
+    });
 
     core.run(server).unwrap();
 }
