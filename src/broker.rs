@@ -1,12 +1,10 @@
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::Arc;
 use std::collections::{VecDeque, HashMap};
 use std::fmt::{self, Debug};
 
 use slog::{Logger, Drain};
 use slog_term;
-use slog_async;
 
 use mqtt3::*;
 
@@ -42,22 +40,19 @@ pub struct Broker {
     /// Subscriptions mapped to interested clients
     subscriptions: Rc<RefCell<HashMap<SubscribeTopic, Vec<Client>>>>,
     pub state: Rc<RefCell<BrokerState>>,
-    logger: Logger,
+    pub logger: Logger,
 }
 
 impl Broker {
     pub fn new() -> Self {
-        let decorator = slog_term::TermDecorator::new().build();
-        let drain = slog_term::CompactFormat::new(decorator).build().fuse();
-        let drain = slog_async::Async::new(drain).build().fuse();
-
         let state = BrokerState::new();
+        let logger = rumqttd_logger();
 
         Broker {
             clients: Rc::new(RefCell::new(HashMap::new())),
             subscriptions: Rc::new(RefCell::new(HashMap::new())),
             state: Rc::new(RefCell::new(state)),
-            logger: Logger::root(Arc::new(drain), o!("version" => env!("CARGO_PKG_VERSION"))),
+            logger: logger,
         }
     }
 
@@ -328,9 +323,17 @@ impl Debug for Broker {
     }
 }
 
+fn rumqttd_logger() -> Logger {
+    use std::sync::Mutex;
+
+    let decorator = slog_term::TermDecorator::new().build();
+    let drain = slog_term::FullFormat::new(decorator).build().fuse();
+    let drain = Mutex::new(drain).fuse();
+    Logger::root(drain, o!("" => ""))
+}
+
 #[cfg(test)]
 mod test {
-    use std::sync::Arc;
     use futures::sync::mpsc::{self, Receiver};
     use client::Client;
     use super::Broker;

@@ -7,7 +7,6 @@ extern crate bytes;
 #[macro_use]
 extern crate slog;
 extern crate slog_term;
-extern crate slog_async;
 #[macro_use]
 extern crate quick_error;
 
@@ -18,7 +17,6 @@ pub mod client;
 
 use std::io;
 use std::io::ErrorKind;
-use std::sync::Arc;
 use std::time::Duration;
 
 use mqtt3::*;
@@ -41,20 +39,18 @@ fn main() {
     let mut core = Core::new().unwrap();
     let handle = core.handle();
     let address = "0.0.0.0:1883".parse().unwrap();
+    let logger = rumqttd_logger();
 
-    let decorator = slog_term::TermDecorator::new().build();
-    let drain = slog_term::CompactFormat::new(decorator).build().fuse();
-    let drain = slog_async::Async::new(drain).build().fuse();
-    let logger = Logger::root(Arc::new(drain), o!("version" => env!("CARGO_PKG_VERSION")));
+    info!(logger, "⚡   starting broker");
 
     let listener = TcpListener::bind(&address, &core.handle()).unwrap();
 
     let broker = Broker::new();
-
+    info!(logger, "👂🏼   listening for connections");
     let welcomes = listener.incoming()
                            .and_then(|(socket, addr)| {
         let framed = socket.framed(MqttCodec);
-
+        info!(logger, "🌟   new connection from {}", addr );
         let broker = broker.clone();
 
         // Creates a 'Self' from stream, whose error match to that of and_then's closure
@@ -63,7 +59,6 @@ fn main() {
                                   .and_then(move |(packet,framed)| { // only accepted connections from here
 
                 let broker = broker.clone();
-
                 if let Some(Packet::Connect(c)) = packet {
                     // TODO: Do connect packet validation here
                     let (tx, rx) = mpsc::channel::<Packet>(100);
@@ -73,6 +68,7 @@ fn main() {
 
                     Ok((framed, client, rx))
                 } else {
+                    error!(broker.logger, "invalid handshake packet");
                     Err(io::Error::new(io::ErrorKind::Other, "Invalid Handshake Packet"))
                 }
             });
@@ -116,8 +112,7 @@ fn main() {
                     _ => panic!("Incoming Misc: {:?}", msg),
                 }
                 Ok(())
-            }).then(move |e| {
-                println!("{:?}", e);
+            }).then(move |_| {
                 Ok::<_, ()>(())
             });
 
@@ -145,7 +140,6 @@ fn main() {
                               .forward(sender)
                               .then(move |_| -> ::std::result::Result<(), ()> {
                                         // forward error. n/w disconnections.
-                                        println!("%%% RX DISCONNECTION");
                                         Ok(())
                                     });
 
@@ -153,7 +147,7 @@ fn main() {
 
             let connection = rx_future.select(tx_future);
             let connection = connection.then(move |_| {
-                                                 println!("Disconnecting client: {:?}", id);
+                                                 error!(broker2.logger, "disconnecting client: {:?}", id );
                                                  broker2.remove_client(&id);
                                                  Ok(())
                                              });
@@ -164,4 +158,13 @@ fn main() {
     });
 
     core.run(server).unwrap();
+}
+
+fn rumqttd_logger() -> Logger {
+    use std::sync::Mutex;
+
+    let decorator = slog_term::TermDecorator::new().build();
+    let drain = slog_term::FullFormat::new(decorator).build().fuse();
+    let drain = Mutex::new(drain).fuse();
+    Logger::root(drain, o!("rumqttd" => env!("CARGO_PKG_VERSION")))
 }

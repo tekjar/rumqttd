@@ -12,7 +12,6 @@ use mqtt3::*;
 
 use slog::{Logger, Drain};
 use slog_term;
-use slog_async;
 
 #[derive(Debug)]
 pub struct ClientState {
@@ -58,17 +57,13 @@ impl Debug for Client {
 impl Client {
     pub fn new(id: &str, addr: SocketAddr, tx: Sender<Packet>) -> Client {
         let state = ClientState::new();
-
-        let decorator = slog_term::TermDecorator::new().build();
-        let drain = slog_term::CompactFormat::new(decorator).build().fuse();
-        let drain = slog_async::Async::new(drain).build().fuse();
+        let logger = rumqttd_logger(id);
 
         Client {
             addr: addr,
             id: id.to_string(),
             tx: tx,
-            logger: Logger::root(Arc::new(drain),
-                                 o!("client-id" => id.to_owned(), "version" => env!("CARGO_PKG_VERSION"))),
+            logger: logger,
             state: Rc::new(RefCell::new(state)),
         }
     }
@@ -295,4 +290,13 @@ mod test {
             }
         }
     }
+}
+
+fn rumqttd_logger(client_id: &str) -> Logger {
+    use std::sync::Mutex;
+
+    let decorator = slog_term::TermDecorator::new().build();
+    let drain = slog_term::FullFormat::new(decorator).build().fuse();
+    let drain = Mutex::new(drain).fuse();
+    Logger::root(drain, o!("client-id" => client_id.to_owned()))
 }
