@@ -47,7 +47,7 @@ fn main() {
 
     let broker = Broker::new();
     info!(logger, "👂🏼   listening for connections");
-    let welcomes = listener.incoming()
+    let connections = listener.incoming()
                            .and_then(|(socket, addr)| {
         let framed = socket.framed(MqttCodec);
         info!(logger, "🌟   new connection from {}", addr );
@@ -71,13 +71,13 @@ fn main() {
                     error!(broker.logger, "invalid handshake packet");
                     Err(io::Error::new(io::ErrorKind::Other, "Invalid Handshake Packet"))
                 }
-            });
+        });
 
         handshake
 
     });
 
-    let server = welcomes.map(|w| Some(w))
+    let mqtt = connections.map(|w| Some(w))
                          .or_else(|e| {
                                       error!(logger, "{:?}", e);
                                       Ok::<_, ()>(None)
@@ -157,7 +157,7 @@ fn main() {
         Ok(())
     });
 
-    core.run(server).unwrap();
+    core.run(mqtt).unwrap();
 }
 
 fn rumqttd_logger() -> Logger {
