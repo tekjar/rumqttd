@@ -41,7 +41,7 @@ fn main() {
     let address = "0.0.0.0:1883".parse().unwrap();
     let logger = rumqttd_logger();
 
-    info!(logger, "⚡   starting broker");
+    info!(logger, "🌩️   starting broker");
 
     let listener = TcpListener::bind(&address, &core.handle()).unwrap();
 
@@ -50,7 +50,7 @@ fn main() {
     let handle_inner = handle.clone();
     info!(logger, "👂🏼   listening for connections");
     
-    let connections = listener.incoming().and_then(|(socket, addr)| {
+    let connections = listener.incoming().for_each(|(socket, addr)| {
         let framed = socket.framed(MqttCodec);
         info!(logger, "🌟   new connection from {}", addr );
         let broker_inner = broker_inner.clone();
@@ -69,17 +69,22 @@ fn main() {
 
                     Ok((framed, client, rx))
                 } else {
-                    error!(broker.logger, "invalid handshake packet");
                     Err(io::Error::new(io::ErrorKind::Other, "Invalid Handshake Packet"))
                 }
         });
 
+        // TODO: implement timeout to drop connection if there is no handshake packet after connection
+        // let timeout = Timeout::new(Duration::new(3, 0), &handle_inner).unwrap();
+        // let timeout = timeout.then(|_| Err(io::Error::new(io::ErrorKind::Other, "Invalid Handshake Packet")));
+        // let handshake = handshake.select(timeout);
+
         let broker_inner = broker.clone();
         let handle_inner = handle_inner.clone();
-
-        let mqtt = handshake.map(|w| Some(w))
-                         .or_else(|e| {
-                                      // error!(logger, "{:?}", e);
+        let logger = logger.clone();
+        let mqtt = handshake
+                         .map(|w| Some(w))
+                         .or_else(move |e| {
+                                      error!(logger, "{:?}", e);
                                       Ok::<_, ()>(None)
                                   })
                          .map(move |handshake| {
@@ -118,7 +123,7 @@ fn main() {
                     });
 
                     
-                    let interval = Interval::new(Duration::new(5, 0), &handle_inner).unwrap();
+                    let interval = Interval::new(Duration::new(20, 0), &handle_inner).unwrap();
 
                     let timer_future =
                         interval.for_each(|_| { return Err(io::Error::new(ErrorKind::Other, "Ping Timer Error")); })
@@ -165,6 +170,7 @@ fn main() {
         Ok(())
     });
 
+    //TODO: why isn't this working for 'listener.incoming().for_each'
     core.run(connections).unwrap();
 }
 
