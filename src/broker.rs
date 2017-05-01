@@ -373,6 +373,57 @@ mod test {
     }
 
     #[test]
+    fn remove_clients_from_broker_subscriptions_using_aliases() {
+        let (c1, ..) = mock_client("mock-client-1");
+        let (c2, ..) = mock_client("mock-client-2");
+
+        let s1 = SubscribeTopic {
+            topic_path: "hello/mqtt".to_owned(),
+            qos: QoS::AtMostOnce,
+        };
+
+        let broker = Broker::new();
+
+        // add c1 to to s1, s2, s3 & s4
+        broker.add_subscription_client(s1.clone(), c1.clone());
+        broker.add_subscription_client(s1.clone(), c2.clone());
+
+        let broker_alias = broker.clone();
+
+        // remove c1 & c2 from all subscriptions and verify clients
+        broker_alias.remove_client(&c1.id);
+        broker_alias.remove_client(&c2.id);
+
+        for s in [s1].iter() {
+            let clients = broker.get_subscribed_clients(s.clone());
+            assert_eq!(clients.len(), 0);
+        }
+    }
+
+    #[test]
+    fn store_and_remove_from_broker_state_queues_using_aliases() {
+        let broker = Broker::new();
+        let broker_alias = broker.clone();
+
+        let (pkid1, pkid2, pkid3) = (PacketIdentifier(1), PacketIdentifier(2), PacketIdentifier(3));
+
+        broker.store_rel(pkid1);
+        broker.store_rel(pkid2);
+        broker.store_rel(pkid3);
+
+        broker_alias.remove_rel(pkid2);
+
+        {
+            let state = broker.state.borrow_mut();
+            let mut it = state.incoming_rel.iter();
+
+            assert_eq!(pkid1, *it.next().unwrap());
+            assert_eq!(pkid3, *it.next().unwrap());
+            assert_eq!(None, it.next());
+        }
+    }
+
+    #[test]
     fn add_and_remove_subscriptions_to_the_broker() {
         let (c1, ..) = mock_client("mock-client-1");
         let (c2, ..) = mock_client("mock-client-2");
@@ -442,5 +493,4 @@ mod test {
         }
 
     }
-
 }
