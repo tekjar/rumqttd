@@ -17,7 +17,6 @@ pub mod client;
 
 use std::io;
 use std::io::ErrorKind;
-use std::time::Duration;
 
 use mqtt3::*;
 use tokio_core::reactor::{Core, Interval};
@@ -65,7 +64,9 @@ fn main() {
                     // TODO: Do connect packet validation here
                     let (tx, rx) = mpsc::channel::<Packet>(100);
 
-                    let client = Client::new(&c.client_id, addr, tx.clone());
+                    let mut client = Client::new(&c.client_id, addr, tx.clone());
+                    client.set_keep_alive(c.keep_alive);
+
                     broker.add_client(client.clone());
 
                     Ok((framed, client, rx))
@@ -93,6 +94,9 @@ fn main() {
             // handle each connections n/w send and recv here
             if let Some((framed, client, rx)) = handshake {
                 let id = client.id.clone();
+                let keep_alive = client.keep_alive;
+                let client_timer = client.clone();
+
                 let (sender, receiver) = framed.split();
 
                 let connack = Packet::Connack(Connack {
@@ -107,6 +111,7 @@ fn main() {
                 // current connections incoming n/w packets
                 let rx_future = receiver.for_each(move |msg| {
                     let broker = broker_inner.clone();
+                    client.reset_last_control_at();
                     match msg {
                         Packet::Publish(p) => broker.handle_publish(p, &client),
                         Packet::Subscribe(s) => broker.handle_subscribe(s, &client),
@@ -120,11 +125,16 @@ fn main() {
                     Ok(())
                 }).then(move |_| Ok::<_, ()>(()));
 
-
-                let interval = Interval::new(Duration::new(20, 0), &handle_inner).unwrap();
+                let interval = Interval::new(keep_alive.unwrap(), &handle_inner).unwrap();
 
                 let timer_future =
-                    interval.for_each(|_| { return Err(io::Error::new(ErrorKind::Other, "Ping Timer Error")); })
+                    interval.for_each(move |_| {
+                                if client_timer.has_exceeded_keep_alive() {
+                                    Err(io::Error::new(ErrorKind::Other, "Ping Timer Error"))
+                                } else {
+                                    Ok(())
+                                }
+                            })
                             .then(|_| Ok(()));
 
                 let rx_future = timer_future.select(rx_future);

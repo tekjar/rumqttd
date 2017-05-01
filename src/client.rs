@@ -4,6 +4,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::collections::VecDeque;
+use std::time::{Duration, Instant};
 
 use futures::sync::mpsc::Sender;
 use futures::{Future, Sink};
@@ -15,6 +16,8 @@ use slog_term;
 
 #[derive(Debug)]
 pub struct ClientState {
+    /// Time at which this client received last control packet
+    pub last_control_at: Instant,
     pub last_pkid: PacketIdentifier,
     /// For QoS 1. Stores outgoing publishes
     pub outgoing_pub: VecDeque<Box<Publish>>,
@@ -29,6 +32,7 @@ pub struct ClientState {
 impl ClientState {
     pub fn new() -> Self {
         ClientState {
+            last_control_at: Instant::now(),
             last_pkid: PacketIdentifier(0),
             outgoing_pub: VecDeque::new(),
             outgoing_rec: VecDeque::new(),
@@ -43,6 +47,7 @@ pub struct Client {
     pub id: String,
     pub addr: SocketAddr,
     pub tx: Sender<Packet>,
+    pub keep_alive: Option<Duration>,
 
     pub state: Rc<RefCell<ClientState>>,
     logger: Logger,
@@ -63,8 +68,20 @@ impl Client {
             addr: addr,
             id: id.to_string(),
             tx: tx,
+            keep_alive: None,
             logger: logger,
             state: Rc::new(RefCell::new(state)),
+        }
+    }
+
+    // NOTE: this broker sets keep alive time to 30 seconds (to invoke keep alive checking timer)
+    // if connect packet has a keep alive of 0. this helps broker to disconnect sedentary clients.
+    // spec says it's upto broker when to disconnect sedentary clients
+    pub fn set_keep_alive(&mut self, t: u16) {
+        if t == 0 {
+            self.keep_alive = Some(Duration::new(30, 0));
+        } else {
+            self.keep_alive = Some(Duration::new(t as u64, 0));
         }
     }
 
@@ -78,6 +95,30 @@ impl Client {
         state.last_pkid
     }
 
+    // reset the last control packet received time
+    pub fn reset_last_control_at(&self) {
+        let mut state = self.state.borrow_mut();
+        state.last_control_at = Instant::now();
+    }
+
+    // check when the last control packet/pingreq packet
+    // is received and return the status which tells if
+    // keep alive time has exceeded
+    // NOTE: status will be checked for zero keepalive times also
+    pub fn has_exceeded_keep_alive(&self) -> bool {
+        let state = self.state.borrow_mut();
+        let last_control_at = state.last_control_at;
+
+        if let Some(keep_alive) = self.keep_alive  {
+            if last_control_at.elapsed() > keep_alive {
+                true
+            } else {
+                false
+            }
+        } else {
+            true
+        }
+    }
 
     // TODO: Find out if broker should drop message if a new massage with existing
     // pkid is received
