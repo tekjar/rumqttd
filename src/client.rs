@@ -110,6 +110,8 @@ impl Client {
         let last_control_at = state.last_control_at;
 
         if let Some(keep_alive) = self.keep_alive  {
+            let keep_alive = keep_alive.as_secs();
+            let keep_alive = Duration::new(f32::ceil(1.5 * keep_alive as f32) as u64, 0);
             if last_control_at.elapsed() > keep_alive {
                 true
             } else {

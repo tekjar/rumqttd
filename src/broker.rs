@@ -308,6 +308,7 @@ impl Broker {
     }
 
     pub fn handle_pingreq(&self, client: &Client) {
+        debug!(self.logger, "PingReq <= {:?}",  client.id);
         let pingresp = Packet::Pingresp;
         client.send(pingresp);
     }
@@ -329,7 +330,7 @@ fn rumqttd_logger() -> Logger {
     let decorator = slog_term::TermDecorator::new().build();
     let drain = slog_term::FullFormat::new(decorator).build().fuse();
     let drain = Mutex::new(drain).fuse();
-    Logger::root(drain, o!("" => ""))
+    Logger::root(drain, o!("module" => "broker"))
 }
 
 #[cfg(test)]
