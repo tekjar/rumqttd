@@ -91,7 +91,6 @@ client.connect(1883, '127.0.0.1', function () {
         break;
       case 'connect':
         client.write(mqtt.generate(connect));
-        client.write(mqtt.generate(publish));
         break;
       case 'puback':
         client.write(mqtt.generate(puback));
@@ -111,7 +110,6 @@ client.connect(1883, '127.0.0.1', function () {
 
 setTimeout(function () {
   console.log('hello world!');
+  client.end();
 }, 5000);
 
-// client.end();
-client.s
