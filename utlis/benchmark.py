@@ -10,6 +10,8 @@ COUNTER = 0
 START_TIME = time.time()
 END_TIME = None
 LOCK = threading.Lock()
+NUMBER_OF_PUBLISHES = 50000
+WAIT_TIME = 100
 
 def on_message(client, userdata, message):
     global COUNTER
@@ -20,7 +22,7 @@ def on_message(client, userdata, message):
     with LOCK:
         COUNTER = COUNTER + 1
         # print("{}.{}".format(COUNTER, message.topic))
-        if COUNTER > 490:
+        if COUNTER > NUMBER_OF_PUBLISHES - 10:
             END_TIME = time.time()
 
 def benchmark():
@@ -41,16 +43,16 @@ def benchmark():
     client1.on_message = on_message
     client1.subscribe("hello/mqtt", 1)
 
-    for i in range(500):
+    for i in range(NUMBER_OF_PUBLISHES):
         client2.publish("hello/mqtt", "hello mqtt", 1, False)
     
-    time.sleep(3)
+    time.sleep(WAIT_TIME)
     client1.disconnect()
     client2.disconnect()
     execution_time = END_TIME - START_TIME
     print('execution time = {}'.format(execution_time))
     with LOCK:
-        print('dropped = {}\n'.format(500 - COUNTER))
+        print('dropped = {}\n'.format(NUMBER_OF_PUBLISHES - COUNTER))
     return execution_time
 
 times = []

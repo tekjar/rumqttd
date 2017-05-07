@@ -78,6 +78,10 @@ var suback = {
   granted: [1, 2, 3, 128]
 }
 
+var disconnect = {
+  cmd: 'disconnect'
+}
+
 // console.log('suback: ',  mqtt.generate(suback))
 
 var client = new net.Socket();
@@ -103,6 +107,15 @@ client.connect(1883, '127.0.0.1', function () {
         break;
       case 'pubcomp':
         client.write(mqtt.generate(pubcomp));
+        break;
+      case 'subscribe':
+        client.write(mqtt.generate(subscribe));
+        break;
+      case 'suback':
+        client.write(mqtt.generate(suback));
+        break;
+      case 'disconnect':
+        client.write(mqtt.generate(disconnect));
         break;
     }
   });
