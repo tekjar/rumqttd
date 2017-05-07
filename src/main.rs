@@ -108,6 +108,7 @@ fn main() {
                 let broker_inner = broker_handshake.clone();
                 let handle_inner = handle_inner.clone();
 
+                let error_logger = broker_handshake.logger.clone();
                 // current connections incoming n/w packets
                 let rx_future = receiver.for_each(move |msg| {
                     let broker = broker_inner.clone();
@@ -123,22 +124,30 @@ fn main() {
                         _ => panic!("Incoming Misc: {:?}", msg),
                     }
                     Ok(())
-                }).then(move |_| Ok::<_, ()>(()));
+                }).map_err(move |e| {
+                    error!(error_logger, "network receiver error = {:?}", e);
+                    Ok::<_, ()>(())
+                })
+                .then(move |_| Ok::<_, ()>(()));
 
                 let interval = Interval::new(keep_alive.unwrap(), &handle_inner).unwrap();
-
-                let timer_future =
-                    interval.for_each(move |_| {
+                let error_logger = broker_handshake.logger.clone();
+                let timer_future = interval.for_each(move |_| {
                                 if client_timer.has_exceeded_keep_alive() {
                                     Err(io::Error::new(ErrorKind::Other, "Ping Timer Error"))
                                 } else {
                                     Ok(())
                                 }
                             })
+                            .map_err(move |e| {
+                                      error!(error_logger, "ping timer error = {:?}", e);
+                                      Ok::<_, ()>(())
+                            })
                             .then(|_| Ok(()));
 
                 let rx_future = timer_future.select(rx_future);
 
+                let error_logger = broker_handshake.logger.clone();
                 // current connections outgoing n/w packets
                 let tx_future = rx.map_err(|_| Error::Other)
                                   .map(|r| match r {
@@ -153,10 +162,13 @@ fn main() {
                                            _ => panic!("Outgoing Misc: {:?}", r),
                                        })
                                   .forward(sender)
-                                  .then(move |_| -> ::std::result::Result<(), ()> {
-                                            // forward error. n/w disconnections.
-                                            Ok(())
-                                        });
+                                  .map_err(move |e| {
+                                      error!(error_logger, "network transmission error = {:?}", e);
+                                      Ok::<_, ()>(())
+                                  })
+                                  .then(move |_| {
+                                      Ok::<_, ()>(())
+                                  });
 
                 let rx_future = rx_future.then(|_| Ok(()));
 
