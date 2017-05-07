@@ -49,14 +49,16 @@ fn main() {
     let handle_inner = handle.clone();
     info!(logger, "👂🏼   listening for connections");
 
-    let connections = listener.incoming()
-                              .for_each(|(socket, addr)| {
-        let framed = socket.framed(MqttCodec);
+    let connections = listener.incoming().for_each(|(socket, addr)| {
+        let framed = socket.framed(MqttCodec::new());
         info!(logger, "🌟   new connection from {}", addr);
         let broker_inner = broker_inner.clone();
-        // Creates a 'Self' from stream, whose error match to that of and_then's closure
+        let error_logger = broker_inner.logger.clone();
         let handshake = framed.into_future()
-                                  .map_err(|(err, _)| err) // for accept errors, get error and discard the stream
+                                  .map_err(move |(err, _)| {
+                                      error!(error_logger, "pre handshake error = {:?}", err);
+                                      err
+                                  }) // for accept errors, get error and discard the stream
                                   .and_then(move |(packet,framed)| { // only accepted connections from here
 
                 let broker = broker_inner.clone();

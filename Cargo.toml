@@ -11,7 +11,7 @@ tokio-core = "0.1"
 tokio-timer = "0.1"
 quick-error = "1.1"
 slog = "2"
-slog-term = "2.0.0-4.0"
+slog-term = "2"
 slog-async = "2"
 mqtt3 = { git = "https://github.com/tekjar/mqtt3" }
 #mqtt3 = {path = "../mqtt3"}
