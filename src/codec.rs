@@ -30,7 +30,7 @@ impl Decoder for MqttCodec {
         // Ok(0) => translated to UnexpectedEOF by `byteorder` crate.
         // `read` call Ok(0) happens when buffer specified was 0 bytes in len
         // https://doc.rust-lang.org/std/io/trait.Read.html#tymethod.read
-        if buf.len() == 0 {
+        if buf.len() < 2 {
             return Ok(None);
         }
 
@@ -41,6 +41,7 @@ impl Decoder for MqttCodec {
                     if let mqtt3::Error::Io(e) = e {
                         match e.kind() {
                             ErrorKind::TimedOut | ErrorKind::WouldBlock => return Ok(None),
+                            ErrorKind::UnexpectedEof => return Ok(None),
                             _ => {
                                 error!(self.logger, "mqtt3 io error = {:?}", e);
                                 return Err(io::Error::new(e.kind(), e.description()))
