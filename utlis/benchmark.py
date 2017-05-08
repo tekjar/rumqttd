@@ -2,11 +2,12 @@ import paho.mqtt.client as mqtt
 import time
 import sys
 import threading
+import itertools
 
 BROKER = "localhost"
 PORT = 1883
 KEEP_ALIVE = 60
-COUNTER = 0
+COUNTER = itertools.count()
 START_TIME = time.time()
 END_TIME = None
 LOCK = threading.Lock()
@@ -17,13 +18,10 @@ def on_message(client, userdata, message):
     global COUNTER
     global START_TIME
     global END_TIME
-    global LOCK
 
-    with LOCK:
-        COUNTER = COUNTER + 1
-        # print("{}.{}".format(COUNTER, message.topic))
-        if COUNTER > NUMBER_OF_PUBLISHES - 10:
-            END_TIME = time.time()
+    # print("{}.{}".format(COUNTER, message.topic))
+    if COUNTER.next() > (NUMBER_OF_PUBLISHES - 10):
+        END_TIME = time.time()
 
 def benchmark():
     global START_TIME
@@ -51,13 +49,12 @@ def benchmark():
     client2.disconnect()
     execution_time = END_TIME - START_TIME
     print('execution time = {}'.format(execution_time))
-    with LOCK:
-        print('dropped = {}\n'.format(NUMBER_OF_PUBLISHES - COUNTER))
+    print('dropped = {}\n'.format(NUMBER_OF_PUBLISHES - COUNTER.next()))
     return execution_time
 
 times = []
 for i in range(3):
-    COUNTER = 0
+    COUNTER = itertools.count()
     print('------------------- benchmark ' + str(i) + ' --------------------')
     t = benchmark()
     times.append(t)
