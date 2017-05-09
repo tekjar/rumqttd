@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"sync/atomic"
 	"time"
 
 	STATS "github.com/akhenakh/statgo"
@@ -33,13 +34,32 @@ func stats(exit chan bool) {
 	}
 }
 
-func main() {
-	exit := make(chan bool)
-	go stats(exit)
+var counter uint64
+var start = time.Now()
+var end = time.Now()
 
-	start := time.Now()
+const totalPublishes = 1000000
+
+func main() {
+	exit := make(chan bool, totalPublishes)
+	statExit := make(chan bool)
+
+	go stats(statExit)
+
 	opts := MQTT.NewClientOptions().AddBroker("tcp://localhost:1883")
 	opts.SetClientID("mqtt-benchmark")
+
+	msgHandler := func(client MQTT.Client, msg MQTT.Message) {
+		c := atomic.AddUint64(&counter, 1)
+		exit <- false
+
+		if c >= totalPublishes {
+			exit <- true
+			statExit <- true
+		}
+	}
+
+	// opts.SetDefaultPublishHandler(msgHandler)
 
 	//create and start a client using the above ClientOptions
 	c := MQTT.NewClient(opts)
@@ -48,15 +68,31 @@ func main() {
 		panic(token.Error())
 	}
 
-	for i := 0; i < 500000; i++ {
-		// fmt.Println(i)
+	if token := c.Subscribe("go-mqtt/sample", 1, msgHandler); token.Wait() && token.Error() != nil {
+		panic(token.Error())
+	}
+
+	for i := 0; i < totalPublishes; i++ {
 		text := fmt.Sprintf("this is msg #%d!", i)
 		token := c.Publish("go-mqtt/sample", 1, false, text)
 		token.Wait()
 	}
 
-	elapsed := time.Since(start)
-	log.Printf("time taken = %s", elapsed)
-	exit <- true
-	time.Sleep(10 * time.Second)
+	log.Printf("time taken for publishes = %s", time.Since(start))
+
+L:
+	for {
+		select {
+		case e := <-exit:
+			if e {
+				break L
+			}
+		case <-time.After(5 * time.Second):
+			log.Printf("missing publishes. incoming pub count = %d. time taken for incoming pubs = %s", atomic.LoadUint64(&counter), time.Since(start))
+			break L
+		}
+	}
+
+	log.Printf("incoming pub count = %d. time taken for incoming pubs = %s", atomic.LoadUint64(&counter), time.Since(start))
+	time.Sleep(1 * time.Second)
 }
