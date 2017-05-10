@@ -4,6 +4,11 @@ extern crate tokio_core;
 extern crate tokio_io;
 extern crate tokio_timer;
 extern crate bytes;
+extern crate toml;
+extern crate serde;
+#[macro_use]
+extern crate serde_derive;
+
 #[macro_use]
 extern crate slog;
 extern crate slog_term;
@@ -14,8 +19,10 @@ pub mod error;
 pub mod codec;
 pub mod broker;
 pub mod client;
+pub mod conf;
 
-use std::io;
+use std::fs::File;
+use std::io::{self, Read};
 use std::io::ErrorKind;
 
 use mqtt3::*;
@@ -37,6 +44,12 @@ use error::Error;
 fn main() {
     let mut core = Core::new().unwrap();
     let handle = core.handle();
+
+    let mut conf = String::new();
+    let _ = File::open("conf/rumqttd.conf").unwrap().read_to_string(&mut conf);
+    let conf = toml::from_str::<conf::Rumqttd>(&conf).unwrap();
+    println!("{:#?}", conf);
+
     let address = "0.0.0.0:1883".parse().unwrap();
     let logger = rumqttd_logger();
 
