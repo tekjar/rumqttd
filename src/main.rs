@@ -19,6 +19,7 @@ pub mod error;
 pub mod codec;
 pub mod broker;
 pub mod client;
+pub mod subscription;
 pub mod conf;
 
 use std::fs::File;
