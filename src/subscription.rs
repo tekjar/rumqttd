@@ -1,9 +1,11 @@
 use std::collections::HashMap;
 
 use client::Client;
-use mqtt3::{TopicPath, SubscribeTopic};
+use mqtt3::{TopicPath, SubscribeTopic, ToTopicPath};
 use error::Result;
 
+// NOTE: split subscription list into concrete & and wild card subscriptions
+// all concrete subscription clients could be fetched in O(1)~
 pub struct SubscriptionList {
     concrete: HashMap<SubscribeTopic, Vec<Client>>,
     wild: HashMap<SubscribeTopic, Vec<Client>>,
@@ -63,28 +65,33 @@ impl SubscriptionList {
         Ok(())
     }
 
-    fn match_with_wild_topic(concrete: String, wild: String) -> bool {
-        true
-    }
-
-    /// Get the list of clients for a given subscription
+    /// Get the list of subscribed clients for a given concrete subscription topic
     pub fn get_subscribed_clients(&mut self, topic: SubscribeTopic) -> Result<Vec<Client>> {
         let topic_path = TopicPath::from_str(topic.topic_path.clone())?;
+        // subscription topic should only have concrete topic path
+        let _ = topic_path.to_topic_name()?;
+        
+        let mut all_clients = vec![];
 
-        let clients = if topic_path.wildcards {
-            if let Some(v) = self.wild.get(&topic) {
-                v.clone()
-            } else {
-                vec![]
-            }
-        } else {
-            if let Some(v) = self.concrete.get(&topic) {
-                v.clone()
-            } else {
-                vec![]
-            }
-        };
+        // O(1) matches from concrete hashmap
+        if let Some(clients) = self.concrete.get(&topic) {
+            all_clients.extend(clients.clone());
+        }
 
-        Ok(clients)
+        for (subscription, clients) in self.wild.iter() {
+            let wild_subscription_topic = TopicPath::from_str(subscription.topic_path.clone())?;
+            if wild_subscription_topic.is_match(&topic_path) {
+                all_clients.extend(clients.clone());
+            }
+        }
+
+        Ok(all_clients)
     }
+}
+
+#[cfg(test)]
+mod test {
+    use super::SubscriptionList;
+
+    
 }
