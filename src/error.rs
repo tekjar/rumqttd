@@ -27,6 +27,7 @@ quick_error! {
             cause(err)
             display("timer error: {}", err)
         }
+        InvalidMqttPacket
         Other
     }
 }

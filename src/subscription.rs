@@ -6,6 +6,8 @@ use error::Result;
 
 // NOTE: split subscription list into concrete & and wild card subscriptions
 // all concrete subscription clients could be fetched in O(1)~
+
+#[derive(Debug)]
 pub struct SubscriptionList {
     concrete: HashMap<SubscribeTopic, Vec<Client>>,
     wild: HashMap<SubscribeTopic, Vec<Client>>,
@@ -62,6 +64,23 @@ impl SubscriptionList {
                 }
             }
         }
+        Ok(())
+    }
+
+    /// Remove a client from all the subscriptions
+    pub fn remove_client(&mut self, id: &str) -> Result<()> {
+        for clients in self.concrete.values_mut() {
+            if let Some(index) = clients.iter().position(|v| v.id == id) {
+                clients.remove(index);
+            }
+        }
+
+        for clients in self.wild.values_mut() {
+            if let Some(index) = clients.iter().position(|v| v.id == id) {
+                clients.remove(index);
+            }
+        }
+
         Ok(())
     }
 
