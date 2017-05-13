@@ -8,6 +8,8 @@ extern crate toml;
 extern crate serde;
 #[macro_use]
 extern crate serde_derive;
+#[macro_use]
+extern crate lazy_static;
 
 #[macro_use]
 extern crate slog;
@@ -25,6 +27,7 @@ pub mod conf;
 use std::fs::File;
 use std::io::{self, Read};
 use std::io::ErrorKind;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use mqtt3::*;
 use tokio_core::reactor::{Core, Interval};
@@ -42,16 +45,19 @@ use broker::Broker;
 use codec::MqttCodec;
 use error::Error;
 
+lazy_static! {
+    pub static ref CONF: conf::Rumqttd = {
+        let mut conf = String::new();
+        let _ = File::open("conf/rumqttd.conf").unwrap().read_to_string(&mut conf);
+        toml::from_str::<conf::Rumqttd>(&conf).unwrap()
+    };
+}
+
 fn main() {
     let mut core = Core::new().unwrap();
     let handle = core.handle();
 
-    let mut conf = String::new();
-    let _ = File::open("conf/rumqttd.conf").unwrap().read_to_string(&mut conf);
-    let conf = toml::from_str::<conf::Rumqttd>(&conf).unwrap();
-    println!("{:#?}", conf);
-
-    let address = "0.0.0.0:1883".parse().unwrap();
+    let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), CONF.connection.port);
     let logger = rumqttd_logger();
 
     info!(logger, "🌩️   starting broker");

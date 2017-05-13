@@ -1,5 +1,4 @@
 - [ ] broker should disconnect clients which doesn't send connect packt in within timeout after tcp connection
 - [ ] broker should disconnect clients which send non 'connect' packets after tcp connection
 - [ ] broker should disconnect clients which doesn't send pingreq in time
-- [ ] broker should diconnect clients which send wildcards in publishes
 - [ ] broker should disconnect clients which subscribes with # wildcard inbetween e.g a/#/b

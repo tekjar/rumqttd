@@ -1,28 +1,28 @@
 #[derive(Debug, Deserialize)]
 pub struct Rumqttd {
-    version: String,
-    connection: Connection,
-    log: Log,
-    security: Security,
-    session: Session,
-    misc: Misc,
+    pub version: String,
+    pub connection: Connection,
+    pub log: Log,
+    pub security: Security,
+    pub session: Session,
+    pub misc: Misc,
 }
 
 #[derive(Debug, Deserialize)]
-struct Connection {
-    port: u32,
-    timeout: String,
+pub struct Connection {
+    pub port: u16,
+    pub timeout: String,
 }
 
 #[derive(Debug, Deserialize)]
-struct Log {
+pub struct Log {
     level: String,
     console: bool,
     file: String,
 }
 
 #[derive(Debug, Deserialize)]
-struct Security {
+pub struct Security {
     username: String,
     password: String,
     max_clients: i32,
@@ -33,14 +33,14 @@ struct Security {
 }
 
 #[derive(Debug, Deserialize)]
-struct Session {
+pub struct Session {
     max_inflight: u32,
     retry_interval: String,
     expiry: String,
 }
 
 #[derive(Debug, Deserialize)]
-struct Misc {
+pub struct Misc {
     max_clientid_len: u32,
     max_packet_size: String,
     idle_timeout: String,

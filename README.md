@@ -10,8 +10,7 @@ high performance tokio based rust mqtt broker
 
 # todo
 
-- [ ] config file
-- [ ] ignore invalid publishes with wildcard
+- [X] config file
 - [X] topic wild cards
 - [ ] distinguish clean session & persistent session
 - [ ] last will
