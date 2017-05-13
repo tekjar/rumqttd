@@ -88,6 +88,7 @@ L:
 				break L
 			}
 		case <-time.After(5 * time.Second):
+			statExit <- true
 			log.Printf("missing publishes. incoming pub count = %d. time taken for incoming pubs = %s", atomic.LoadUint64(&counter), time.Since(start))
 			break L
 		}
