@@ -68,6 +68,8 @@ impl SubscriptionList {
     /// Get the list of subscribed clients for a given concrete subscription topic
     pub fn get_subscribed_clients(&mut self, topic: SubscribeTopic) -> Result<Vec<Client>> {
         let topic_path = TopicPath::from_str(topic.topic_path.clone())?;
+        let qos = topic.qos;
+
         // subscription topic should only have concrete topic path
         let _ = topic_path.to_topic_name()?;
         
@@ -80,7 +82,9 @@ impl SubscriptionList {
 
         for (subscription, clients) in self.wild.iter() {
             let wild_subscription_topic = TopicPath::from_str(subscription.topic_path.clone())?;
-            if wild_subscription_topic.is_match(&topic_path) {
+            let wild_subscription_qos = subscription.qos;
+
+            if wild_subscription_qos == qos && wild_subscription_topic.is_match(&topic_path) {
                 all_clients.extend(clients.clone());
             }
         }
@@ -91,7 +95,89 @@ impl SubscriptionList {
 
 #[cfg(test)]
 mod test {
+    use futures::sync::mpsc::{self, Receiver};
+    use client::Client;
     use super::SubscriptionList;
+    use mqtt3::*;
 
-    
+    fn mock_client(id: &str) -> (Client, Receiver<Packet>) {
+        let (tx, rx) = mpsc::channel::<Packet>(8);
+        (Client::new(id, "127.0.0.1:80".parse().unwrap(), tx), rx)
+    }
+
+    #[test]
+    fn match_topics_with_wild_card_and_concrete_subscription_clients() {
+        let (c1, ..) = mock_client("mock-client-1");
+        let (c2, ..) = mock_client("mock-client-2");
+        let (c3, ..) = mock_client("mock-client-3");
+
+        let s1 = SubscribeTopic {
+            topic_path: "hello/mqtt/rumqttd".to_owned(),
+            qos: QoS::AtMostOnce,
+        };
+
+        let s2 = SubscribeTopic {
+            topic_path: "hello/+/rumqttd".to_owned(),
+            qos: QoS::AtMostOnce,
+        };
+
+        let s3 = SubscribeTopic {
+            topic_path: "hello/#".to_owned(),
+            qos: QoS::AtMostOnce,
+        };
+
+        let mut sub_list = SubscriptionList::new();
+        sub_list.add_subscription(s1, c1).unwrap();
+        sub_list.add_subscription(s2, c2).unwrap();
+        sub_list.add_subscription(s3, c3).unwrap();
+
+        let s4 = SubscribeTopic {
+            topic_path: "hello/mqtt/rumqttd".to_owned(),
+            qos: QoS::AtMostOnce,
+        };
+
+        let clients = sub_list.get_subscribed_clients(s4).unwrap();
+
+        assert_eq!(clients.len(), 3);
+
+        assert!(clients.iter().any(|e| e.id == "mock-client-1"));
+        assert!(clients.iter().any(|e| e.id == "mock-client-2"));
+        assert!(clients.iter().any(|e| e.id == "mock-client-3"));
+    }
+
+    /// subscription("a/+/c", atmostonce) shouldn't match with ("a/b/c", atleastonce)
+    #[test]
+    fn dont_match_subscription_with_matching_topic_but_nonmatching_qos(){
+        let (c1, ..) = mock_client("mock-client-1");
+        let s1 = SubscribeTopic {
+            topic_path: "hello/+/rumqttd".to_owned(),
+            qos: QoS::AtMostOnce,
+        };
+
+        let mut sub_list = SubscriptionList::new();
+        sub_list.add_subscription(s1, c1).unwrap();
+
+        let s2 = SubscribeTopic {
+            topic_path: "hello/mqtt/rumqttd".to_owned(),
+            qos: QoS::AtLeastOnce,
+        };
+
+        let clients = sub_list.get_subscribed_clients(s2).unwrap();
+        assert_eq!(clients.len(), 0);
+    }
+
+    /// subscriptions like 'a/#/c' shouldn't be allowed
+    #[test]
+    #[should_panic]
+    fn dont_allow_subscription_with_multiwildcard_inbetween_topic() {
+        let (c1, ..) = mock_client("mock-client-1");
+        let s1 = SubscribeTopic {
+            topic_path: "hello/#/rumqttd".to_owned(),
+            qos: QoS::AtMostOnce,
+        };
+
+        let mut sub_list = SubscriptionList::new();
+        sub_list.add_subscription(s1, c1).unwrap();
+    }
+
 }
