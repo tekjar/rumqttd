@@ -7,8 +7,10 @@ use slog::{Logger, Drain};
 use slog_term;
 
 use mqtt3::*;
+use error::Result;
 
 use client::Client;
+use subscription::SubscriptionList;
 
 #[derive(Debug)]
 pub struct BrokerState {
@@ -38,7 +40,7 @@ pub struct Broker {
     /// All the active clients mapped to their IDs
     clients: Rc<RefCell<HashMap<String, Client>>>,
     /// Subscriptions mapped to interested clients
-    subscriptions: Rc<RefCell<HashMap<SubscribeTopic, Vec<Client>>>>,
+    subscriptions: Rc<RefCell<SubscriptionList>>,
     pub state: Rc<RefCell<BrokerState>>,
     pub logger: Logger,
 }
@@ -50,7 +52,7 @@ impl Broker {
 
         Broker {
             clients: Rc::new(RefCell::new(HashMap::new())),
-            subscriptions: Rc::new(RefCell::new(HashMap::new())),
+            subscriptions: Rc::new(RefCell::new(SubscriptionList::new())),
             state: Rc::new(RefCell::new(state)),
             logger: logger,
         }
@@ -65,52 +67,28 @@ impl Broker {
 
     /// Adds client to a subscription. If the subscription doesn't exist,
     /// new subscription is created and the client will be added to it
-    fn add_subscription_client(&self, topic: SubscribeTopic, client: Client) {
+    fn add_subscription_client(&self, topic: SubscribeTopic, client: Client) -> Result<()> {
         let mut subscriptions = self.subscriptions.borrow_mut();
-        let clients = subscriptions.entry(topic).or_insert(Vec::new());
-
-        // add client to a subscription only if it doesn't already exist or
-        // else replace the existing one
-        if let Some(index) = clients.iter().position(|v| v.id == client.id) {
-            clients.insert(index, client);
-        } else {
-            clients.push(client);
-        }
+        subscriptions.add_subscription(topic, client)
     }
 
     /// Remove a client from a subscription
-    pub fn remove_subscription_client(&self, topic: SubscribeTopic, id: &str) {
+    pub fn remove_subscription_client(&self, topic: SubscribeTopic, id: &str) -> Result<()> {
         let mut subscriptions = self.subscriptions.borrow_mut();
-
-        if let Some(clients) = subscriptions.get_mut(&topic) {
-            if let Some(index) = clients.iter().position(|v| v.id == id) {
-                clients.remove(index);
-            }
-        }
+        subscriptions.remove_subscription_client(topic, id)
     }
 
     /// Get the list of clients for a given subscription
-    fn get_subscribed_clients(&self, topic: SubscribeTopic) -> Vec<Client> {
-        let subscriptions = self.subscriptions.borrow_mut();
-
-        if let Some(v) = subscriptions.get(&topic) {
-            v.clone()
-        } else {
-            vec![]
-        }
+    fn get_subscribed_clients(&self, topic: SubscribeTopic) -> Result<Vec<Client>> {
+        let mut subscriptions = self.subscriptions.borrow_mut();
+        subscriptions.get_subscribed_clients(topic)
     }
 
     // Remove the client from broker (including subscriptions)
-    pub fn remove_client(&self, id: &str) {
+    pub fn remove_client(&self, id: &str) -> Result<()> {
         self.clients.borrow_mut().remove(id);
-
         let mut subscriptions = self.subscriptions.borrow_mut();
-
-        for clients in subscriptions.values_mut() {
-            if let Some(index) = clients.iter().position(|v| v.id == id) {
-                clients.remove(index);
-            }
-        }
+        subscriptions.remove_client(id)
     }
 
     // TODO: Find out if broker should drop message if a new massage with existing
@@ -175,22 +153,23 @@ impl Broker {
         };
     }
 
-    pub fn handle_subscribe(&self, subscribe: Box<Subscribe>, client: &Client) {
+    pub fn handle_subscribe(&self, subscribe: Box<Subscribe>, client: &Client) -> Result<()> {
         let pkid = subscribe.pid;
         let mut return_codes = Vec::new();
 
         // Add current client's id to this subscribe topic
         for topic in subscribe.topics {
-            self.add_subscription_client(topic.clone(), client.clone());
+            self.add_subscription_client(topic.clone(), client.clone())?;
             return_codes.push(SubscribeReturnCodes::Success(topic.qos));
         }
 
         let suback = client.suback_packet(pkid, return_codes);
         let packet = Packet::Suback(suback);
         client.send(packet);
+        Ok(())
     }
 
-    fn forward_to_subscribers(&self, publish: Box<Publish>) {
+    fn forward_to_subscribers(&self, publish: Box<Publish>) -> Result<()> {
         let topic = publish.topic_name.clone();
         let payload = publish.payload.clone();
 
@@ -203,7 +182,7 @@ impl Broker {
                 qos: qos.clone(),
             };
 
-            for client in self.get_subscribed_clients(subscribe_topic) {
+            for client in self.get_subscribed_clients(subscribe_topic)? {
                 let publish = client.publish_packet(&topic, qos.clone(), payload.clone(), false, false);
                 let packet = Packet::Publish(publish.clone());
 
@@ -216,21 +195,22 @@ impl Broker {
                 client.send(packet);
             }
         }
+        Ok(())
     }
 
-    pub fn handle_publish(&self, publish: Box<Publish>, client: &Client) {
+    pub fn handle_publish(&self, publish: Box<Publish>, client: &Client) -> Result<()> {
         let pkid = publish.pid;
         let qos = publish.qos;
 
         match qos {
-            QoS::AtMostOnce => self.forward_to_subscribers(publish),
+            QoS::AtMostOnce => self.forward_to_subscribers(publish)?,
             // send puback for qos1 packet immediately
             QoS::AtLeastOnce => {
                 if let Some(pkid) = pkid {
                     let packet = Packet::Puback(pkid);
                     client.send(packet);
                     // we should fwd only qos1 packets to all the subscribers (any qos) at this point
-                    self.forward_to_subscribers(publish);
+                    self.forward_to_subscribers(publish)?;
                 } else {
                     error!(self.logger,
                            "Ignoring publish packet. No pkid for QoS1 packet");
@@ -247,14 +227,17 @@ impl Broker {
                            "Ignoring record packet. No pkid for QoS2 packet");
                 }
             }
-        }
+        };
+
+        Ok(())
     }
 
-    pub fn handle_puback(&self, pkid: PacketIdentifier, client: &Client) {
+    pub fn handle_puback(&self, pkid: PacketIdentifier, client: &Client) -> Result<()> {
         client.remove_publish(pkid);
+        Ok(())
     }
 
-    pub fn handle_pubrec(&self, pkid: PacketIdentifier, client: &Client) {
+    pub fn handle_pubrec(&self, pkid: PacketIdentifier, client: &Client) -> Result<()> {
         debug!(self.logger, "PubRec <= {:?}", pkid);
 
         // remove record packet from state queues
@@ -264,14 +247,16 @@ impl Broker {
             let packet = Packet::Pubrel(pkid);
             client.send(packet);
         }
+        Ok(())
     }
 
-    pub fn handle_pubcomp(&self, pkid: PacketIdentifier, client: &Client) {
+    pub fn handle_pubcomp(&self, pkid: PacketIdentifier, client: &Client) -> Result<()> {
         // remove release packet from state queues
         client.remove_rel(pkid);
+        Ok(())
     }
 
-    pub fn handle_pubrel(&self, pkid: PacketIdentifier, client: &Client) {
+    pub fn handle_pubrel(&self, pkid: PacketIdentifier, client: &Client) -> Result<()> {
         // client is asking to release all the recorded packets
 
         // send pubcomp packet to the client first
@@ -291,7 +276,7 @@ impl Broker {
                     qos: qos.clone(),
                 };
 
-                for client in self.get_subscribed_clients(subscribe_topic) {
+                for client in self.get_subscribed_clients(subscribe_topic)? {
                     let publish = client.publish_packet(&topic, qos.clone(), payload.clone(), false, false);
                     let packet = Packet::Publish(publish.clone());
 
@@ -305,12 +290,15 @@ impl Broker {
                 }
             }
         }
+
+        Ok(())
     }
 
-    pub fn handle_pingreq(&self, client: &Client) {
+    pub fn handle_pingreq(&self, client: &Client) -> Result<()> {
         debug!(self.logger, "PingReq <= {:?}",  client.id);
         let pingresp = Packet::Pingresp;
         client.send(pingresp);
+        Ok(())
     }
 }
 

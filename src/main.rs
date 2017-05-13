@@ -19,6 +19,7 @@ pub mod error;
 pub mod codec;
 pub mod broker;
 pub mod client;
+pub mod subscription;
 pub mod conf;
 
 use std::fs::File;
@@ -125,7 +126,8 @@ fn main() {
 
                 let error_logger = broker_handshake.logger.clone();
                 // current connections incoming n/w packets
-                let rx_future = receiver.for_each(move |msg| {
+                let rx_future = receiver.or_else(|e| Err::<_, error::Error>(e.into()))
+                                        .for_each(move |msg| {
                     let broker = broker_inner.clone();
                     client.reset_last_control_at();
                     match msg {
@@ -136,11 +138,10 @@ fn main() {
                         Packet::Pubrel(pkid) => broker.handle_pubrel(pkid, &client),
                         Packet::Pubcomp(pkid) => broker.handle_pubcomp(pkid, &client),
                         Packet::Pingreq => broker.handle_pingreq(&client),
-                        _ => panic!("Incoming Misc: {:?}", msg),
+                        _ => Err(error::Error::InvalidMqttPacket),
                     }
-                    Ok(())
                 }).map_err(move |e| {
-                    error!(error_logger, "network receiver error = {:?}", e);
+                    error!(error_logger, "network incoming handle error = {:?}", e);
                     Ok::<_, ()>(())
                 })
                 .then(move |_| Ok::<_, ()>(()));
@@ -192,7 +193,7 @@ fn main() {
                 let connection = rx_future.select(tx_future);
                 let c = connection.then(move |_| {
                                             error!(broker_inner.logger, "disconnecting client: {:?}", id);
-                                            broker_inner.remove_client(&id);
+                                            let _ = broker_inner.remove_client(&id);
                                             Ok::<_, ()>(())
                                         });
 

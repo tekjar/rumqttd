@@ -12,7 +12,7 @@ high performance tokio based rust mqtt broker
 
 - [ ] config file
 - [ ] ignore invalid publishes with wildcard
-- [ ] topic wild cards
+- [X] topic wild cards
 - [ ] distinguish clean session & persistent session
 - [ ] last will
 - [ ] retained message
@@ -24,32 +24,37 @@ high performance tokio based rust mqtt broker
 
 # benchmarks
 
-Sending 5lakh qos1 publishes (and wait for acks) to broker on local machine
+Subscribe to a wildcard topic & publish 1 million qos1 messages (and wait for acks)
+to the broker on local machine
 
+model: MacBook Air (13-inch, Early 2014)
 processor: 1.4 GHz Intel Core i5
 memory: 4 GB 1600 MHz DDR3
 
 **mosquitto (1.4.11)**
 
 ```
-2017/05/09 05:03:57 time taken = 1m16.076848379s
-load average 1 =  2.25341796875
-average system memory =  2472544741
+2017/05/13 18:26:25 time taken for publishes = 3m23.057874425s
+load average 1 =  3.14501953125
+average system memory =  2561352043
+2017/05/13 18:26:25 incoming pub count = 1000000. time taken for incoming pubs = 3m23.943611846s
 ```
 
 **rumqttd**
 
 ```
-2017/05/09 04:56:23 time taken = 1m19.853062634s
-load average 1 =  1.962890625
-average system memory =  2500233241
+2017/05/13 18:22:08 time taken for publishes = 3m21.243963316s
+load average 1 =  2.671875
+average system memory =  2606343264
+2017/05/13 18:22:09 incoming pub count = 1000000. time taken for incoming pubs = 3m22.055929751s
 ```
 
 **emqttd (2.1.2)**
 
 ```
-2017/05/09 05:08:20 time taken = 2m15.176114959s 
-load average 1 =  2.177734375 
-average system memory =  2452130929 
+2017/05/13 18:49:00 time taken for publishes = 5m41.25939293s
+load average 1 =  2.982421875
+average system memory =  2519452728
+2017/05/13 18:49:06 missing publishes. incoming pub count = 999998. time taken for incoming pubs = 5m47.267925698s
 ```
 

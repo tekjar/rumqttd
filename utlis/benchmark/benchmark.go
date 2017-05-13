@@ -68,13 +68,13 @@ func main() {
 		panic(token.Error())
 	}
 
-	if token := c.Subscribe("go-mqtt/sample", 1, msgHandler); token.Wait() && token.Error() != nil {
+	if token := c.Subscribe("hello/+/rumqtt", 1, msgHandler); token.Wait() && token.Error() != nil {
 		panic(token.Error())
 	}
 
 	for i := 0; i < totalPublishes; i++ {
 		text := fmt.Sprintf("this is msg #%d!", i)
-		token := c.Publish("go-mqtt/sample", 1, false, text)
+		token := c.Publish("hello/mqtt/rumqtt", 1, false, text)
 		token.Wait()
 	}
 
@@ -88,6 +88,7 @@ L:
 				break L
 			}
 		case <-time.After(5 * time.Second):
+			statExit <- true
 			log.Printf("missing publishes. incoming pub count = %d. time taken for incoming pubs = %s", atomic.LoadUint64(&counter), time.Since(start))
 			break L
 		}
