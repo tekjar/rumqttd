@@ -13,7 +13,7 @@ use mqtt3::*;
 use error::{Result, Error};
 
 use client::{ConnectionStatus, Client};
-use subscription::SubscriptionList;
+use subscription_list::SubscriptionList;
 
 #[derive(Debug)]
 pub struct BrokerState {
@@ -76,7 +76,7 @@ impl Broker {
 
     /// Adds client to a subscription. If the subscription doesn't exist,
     /// new subscription is created and the client will be added to it
-    fn add_subscription_client(&self, topic: SubscribeTopic, client: Client) -> Result<()> {
+    fn add_subscription_client(&self, topic: SubscribeTopic, client: Client) -> Result<bool> {
         let mut subscriptions = self.subscriptions.borrow_mut();
         subscriptions.add_subscription(topic, client)
     }
@@ -387,7 +387,7 @@ mod test {
             assert_eq!(clients.contains_key("mock-client-3"), true);
         }
 
-        broker.remove_client("mock-client-2");
+        broker.remove_client("mock-client-2").unwrap();
 
         {
             let clients = broker.clients.borrow();
@@ -410,14 +410,14 @@ mod test {
         let broker = Broker::new();
 
         // add c1 to to s1, s2, s3 & s4
-        broker.add_subscription_client(s1.clone(), c1.clone());
-        broker.add_subscription_client(s1.clone(), c2.clone());
+        broker.add_subscription_client(s1.clone(), c1.clone()).unwrap();
+        broker.add_subscription_client(s1.clone(), c2.clone()).unwrap();
 
         let broker_alias = broker.clone();
 
         // remove c1 & c2 from all subscriptions and verify clients
-        broker_alias.remove_client(&c1.id);
-        broker_alias.remove_client(&c2.id);
+        broker_alias.remove_client(&c1.id).unwrap();
+        broker_alias.remove_client(&c2.id).unwrap();
 
         for s in [s1].iter() {
             let clients = broker.get_subscribed_clients(s.clone()).unwrap();
@@ -477,14 +477,14 @@ mod test {
         let broker = Broker::new();
 
         // add c1 to to s1, s2, s3 & s4
-        broker.add_subscription_client(s1.clone(), c1.clone());
-        broker.add_subscription_client(s2.clone(), c1.clone());
-        broker.add_subscription_client(s3.clone(), c1.clone());
-        broker.add_subscription_client(s4.clone(), c1.clone());
+        broker.add_subscription_client(s1.clone(), c1.clone()).unwrap();
+        broker.add_subscription_client(s2.clone(), c1.clone()).unwrap();
+        broker.add_subscription_client(s3.clone(), c1.clone()).unwrap();
+        broker.add_subscription_client(s4.clone(), c1.clone()).unwrap();
 
         // add c2 to s2 & s5
-        broker.add_subscription_client(s2.clone(), c2.clone());
-        broker.add_subscription_client(s5.clone(), c2.clone());
+        broker.add_subscription_client(s2.clone(), c2.clone()).unwrap();
+        broker.add_subscription_client(s5.clone(), c2.clone()).unwrap();
 
         // verify clients in s1
         let clients = broker.get_subscribed_clients(s1.clone()).unwrap();
@@ -503,14 +503,14 @@ mod test {
         assert_eq!(clients.get(0).unwrap().id, "mock-client-2");
 
         // remove c1 from s2 and verify clients
-        broker.remove_subscription_client(s2.clone(), &c1.id);
+        broker.remove_subscription_client(s2.clone(), &c1.id).unwrap();
         let clients = broker.get_subscribed_clients(s2.clone()).unwrap();
         assert_eq!(clients.len(), 1);
         assert_eq!(clients.get(0).unwrap().id, "mock-client-2");
 
         // remove c1 & c2 from all subscriptions and verify clients
-        broker.remove_client(&c1.id);
-        broker.remove_client(&c2.id);
+        broker.remove_client(&c1.id).unwrap();
+        broker.remove_client(&c2.id).unwrap();
 
         for s in [s1, s2, s3, s4, s5].iter() {
             let clients = broker.get_subscribed_clients(s.clone()).unwrap();

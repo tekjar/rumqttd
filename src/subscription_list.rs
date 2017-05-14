@@ -21,30 +21,32 @@ impl SubscriptionList {
         }
     }
 
-    pub fn add_subscription(&mut self, topic: SubscribeTopic, client: Client) -> Result<()> {
+    pub fn add_subscription(&mut self, topic: SubscribeTopic, client: Client) -> Result<bool> {
         let topic_path = TopicPath::from_str(topic.topic_path.clone())?;
 
         if topic_path.wildcards {
             let clients = self.wild.entry(topic).or_insert(Vec::new());
             // add client to a subscription only if it doesn't already exist or
             // else replace the existing one
-            if let Some(index) = clients.iter().position(|v| v.id == client.id) {
-                clients.insert(index, client);
+            if clients.iter().any(|v| v.id == client.id) {
+                clients.push(client);
+                Ok(true)
             } else {
                 clients.push(client);
+                Ok(false)
             }
         } else {
             let clients = self.concrete.entry(topic).or_insert(Vec::new());
             // add client to a subscription only if it doesn't already exist or
             // else replace the existing one
-            if let Some(index) = clients.iter().position(|v| v.id == client.id) {
-                clients.insert(index, client);
+            if clients.iter().any(|v| v.id == client.id) {
+                clients.push(client);
+                Ok(true)
             } else {
                 clients.push(client);
+                Ok(false)
             }
         }
-
-        Ok(())
     }
 
     /// Remove a client from a subscription
@@ -122,6 +124,59 @@ mod test {
     fn mock_client(id: &str) -> (Client, Receiver<Packet>) {
         let (tx, rx) = mpsc::channel::<Packet>(8);
         (Client::new(id, "127.0.0.1:80".parse().unwrap(), tx), rx)
+    }
+
+    #[test]
+    fn add_clients_to_list() {
+        let (c1, ..) = mock_client("mock-client-1");
+        let (c2, ..) = mock_client("mock-client-2");
+        let (c3, ..) = mock_client("mock-client-2");
+
+        let s1 = SubscribeTopic {
+            topic_path: "hello/mqtt/rumqttd".to_owned(),
+            qos: QoS::AtMostOnce,
+        };
+
+        let s2 = SubscribeTopic {
+            topic_path: "hello/+/rumqttd".to_owned(),
+            qos: QoS::AtMostOnce,
+        };
+
+        let mut subscription_list = SubscriptionList::new();
+        subscription_list.add_subscription(s1.clone(), c1).unwrap();
+        subscription_list.add_subscription(s2.clone(), c2).unwrap();
+        subscription_list.add_subscription(s2.clone(), c3).unwrap();
+
+        assert_eq!(1, subscription_list.concrete.get(&s1).unwrap().len());
+        assert_eq!(2, subscription_list.wild.get(&s2).unwrap().len());
+    }
+
+    #[test]
+    fn remove_clients_from_list() {
+        let (c1, ..) = mock_client("mock-client-1");
+        let (c2, ..) = mock_client("mock-client-2");
+        let (c3, ..) = mock_client("mock-client-2");
+
+        let s1 = SubscribeTopic {
+            topic_path: "hello/mqtt/rumqttd".to_owned(),
+            qos: QoS::AtMostOnce,
+        };
+
+        let s2 = SubscribeTopic {
+            topic_path: "hello/+/rumqttd".to_owned(),
+            qos: QoS::AtMostOnce,
+        };
+
+        let mut subscription_list = SubscriptionList::new();
+        subscription_list.add_subscription(s1.clone(), c1).unwrap();
+        subscription_list.add_subscription(s2.clone(), c2).unwrap();
+        subscription_list.add_subscription(s2.clone(), c3).unwrap();
+
+        subscription_list.remove_client("mock-client-1").unwrap();
+        subscription_list.remove_client("mock-client-2").unwrap();
+
+        assert_eq!(0, subscription_list.concrete.get(&s1).unwrap().len());
+        assert_eq!(1, subscription_list.wild.get(&s2).unwrap().len());
     }
 
     #[test]
