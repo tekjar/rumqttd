@@ -12,7 +12,7 @@ use slog_term;
 use mqtt3::*;
 use error::{Result, Error};
 
-use client::Client;
+use client::{ConnectionStatus, Client};
 use subscription::SubscriptionList;
 
 #[derive(Debug)]
@@ -218,7 +218,10 @@ impl Broker {
                     _ => (),
                 }
 
-                client.send(packet);
+                match client.status() {
+                    ConnectionStatus::Connected => client.send(packet),
+                    _ => (),
+                }
             }
         }
         Ok(())

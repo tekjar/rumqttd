@@ -14,8 +14,16 @@ use mqtt3::*;
 use slog::{Logger, Drain};
 use slog_term;
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum ConnectionStatus {
+    Connected,
+    Disconnected,
+}
+
 #[derive(Debug)]
 pub struct ClientState {
+    /// Connection status of this client for handling persistent sessions
+    pub status: ConnectionStatus,
     /// Time at which this client received last control packet
     pub last_control_at: Instant,
     pub last_pkid: PacketIdentifier,
@@ -32,6 +40,7 @@ pub struct ClientState {
 impl ClientState {
     pub fn new() -> Self {
         ClientState {
+            status: ConnectionStatus::Connected,
             last_control_at: Instant::now(),
             last_pkid: PacketIdentifier(0),
             outgoing_pub: VecDeque::new(),
@@ -98,6 +107,10 @@ impl Client {
         }
         state.last_pkid = PacketIdentifier(pkid + 1);
         state.last_pkid
+    }
+
+    pub fn status(&self) -> ConnectionStatus {
+        self.state.borrow().status
     }
 
     // reset the last control packet received time
