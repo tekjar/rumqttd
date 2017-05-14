@@ -63,9 +63,15 @@ impl Broker {
 
     /// Adds a new client to the broker
     pub fn add_client(&self, client: Client) {
-        self.clients
-            .borrow_mut()
-            .insert(client.id.clone(), client);
+        let mut clients = self.clients.borrow_mut();
+
+        // disconnect old client if the id already exists
+        if let Some(client) = clients.get(&client.id) {
+            warn!(self.logger, "client id already exists. disconnecting it");
+            client.send(Packet::Disconnect);
+        }
+        
+        clients.insert(client.id.clone(), client);
     }
 
     /// Adds client to a subscription. If the subscription doesn't exist,
@@ -176,6 +182,7 @@ impl Broker {
     }
 
     pub fn handle_disconnect(&self, id: &str) -> Result<()> {
+        self.remove_client(id).unwrap();
         Ok(())
     }
 
@@ -413,7 +420,7 @@ mod test {
         broker_alias.remove_client(&c2.id);
 
         for s in [s1].iter() {
-            let clients = broker.get_subscribed_clients(s.clone());
+            let clients = broker.get_subscribed_clients(s.clone()).unwrap();
             assert_eq!(clients.len(), 0);
         }
     }
@@ -480,24 +487,24 @@ mod test {
         broker.add_subscription_client(s5.clone(), c2.clone());
 
         // verify clients in s1
-        let clients = broker.get_subscribed_clients(s1.clone());
+        let clients = broker.get_subscribed_clients(s1.clone()).unwrap();
         assert_eq!(clients.len(), 1);
         assert_eq!(clients.get(0).unwrap().id, "mock-client-1");
 
         // verify clients in s2
-        let clients = broker.get_subscribed_clients(s2.clone());
+        let clients = broker.get_subscribed_clients(s2.clone()).unwrap();
         assert_eq!(clients.len(), 2);
         assert_eq!(clients.get(0).unwrap().id, "mock-client-1");
         assert_eq!(clients.get(1).unwrap().id, "mock-client-2");
 
         // verify clients in s5
-        let clients = broker.get_subscribed_clients(s5.clone());
+        let clients = broker.get_subscribed_clients(s5.clone()).unwrap();
         assert_eq!(clients.len(), 1);
         assert_eq!(clients.get(0).unwrap().id, "mock-client-2");
 
         // remove c1 from s2 and verify clients
         broker.remove_subscription_client(s2.clone(), &c1.id);
-        let clients = broker.get_subscribed_clients(s2.clone());
+        let clients = broker.get_subscribed_clients(s2.clone()).unwrap();
         assert_eq!(clients.len(), 1);
         assert_eq!(clients.get(0).unwrap().id, "mock-client-2");
 
@@ -506,7 +513,7 @@ mod test {
         broker.remove_client(&c2.id);
 
         for s in [s1, s2, s3, s4, s5].iter() {
-            let clients = broker.get_subscribed_clients(s.clone());
+            let clients = broker.get_subscribed_clients(s.clone()).unwrap();
             assert_eq!(clients.len(), 0);
         }
 

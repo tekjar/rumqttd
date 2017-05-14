@@ -165,18 +165,23 @@ fn main() {
                 let rx_future = timer_future.select(rx_future);
 
                 let error_logger = broker_handshake.logger.clone();
+                let error_logger1 = broker_handshake.logger.clone();
                 // current connections outgoing n/w packets
                 let tx_future = rx.map_err(|_| Error::Other)
-                                  .map(|r| match r {
-                                           Packet::Publish(p) => Packet::Publish(p),
-                                           Packet::Connack(c) => Packet::Connack(c),
-                                           Packet::Suback(sa) => Packet::Suback(sa),
-                                           Packet::Puback(pa) => Packet::Puback(pa),
-                                           Packet::Pubrec(prec) => Packet::Pubrec(prec),
-                                           Packet::Pubrel(prel) => Packet::Pubrel(prel),
-                                           Packet::Pubcomp(pc) => Packet::Pubcomp(pc),
-                                           Packet::Pingresp => Packet::Pingresp,
-                                           _ => panic!("Outgoing Misc: {:?}", r),
+                                  .and_then(move |r| match r {
+                                           Packet::Publish(p) => Ok(Packet::Publish(p)),
+                                           Packet::Connack(c) => Ok(Packet::Connack(c)),
+                                           Packet::Suback(sa) => Ok(Packet::Suback(sa)),
+                                           Packet::Puback(pa) => Ok(Packet::Puback(pa)),
+                                           Packet::Pubrec(prec) => Ok(Packet::Pubrec(prec)),
+                                           Packet::Pubrel(prel) => Ok(Packet::Pubrel(prel)),
+                                           Packet::Pubcomp(pc) => Ok(Packet::Pubcomp(pc)),
+                                           Packet::Pingresp => Ok(Packet::Pingresp),
+                                           Packet::Disconnect => Err(Error::DisconnectRequest),
+                                           _ => {
+                                               error!(error_logger1, "improper packet {:?} received. disconnecting", r);
+                                               Err(Error::InvalidMqttPacket)
+                                           }
                                        })
                                   .forward(sender)
                                   .map_err(move |e| {
@@ -184,6 +189,7 @@ fn main() {
                                       Ok::<_, ()>(())
                                   })
                                   .then(move |_| {
+                                      // broker_handshake.handle_disconnect(&id);
                                       Ok::<_, ()>(())
                                   });
 

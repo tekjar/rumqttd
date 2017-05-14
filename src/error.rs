@@ -33,6 +33,9 @@ quick_error! {
         InvalidClientId {
             description("Invalid Client ID")
         }
+        DisconnectRequest {
+            description("Received Disconnect Request")
+        }
         Other
     }
 }
