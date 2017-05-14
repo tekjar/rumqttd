@@ -10,7 +10,7 @@ use slog::{Logger, Drain};
 use slog_term;
 
 use mqtt3::*;
-use error::Result;
+use error::{Result, Error};
 
 use client::Client;
 use subscription::SubscriptionList;
@@ -158,6 +158,11 @@ impl Broker {
 
     pub fn handle_connect(&self, connect: Box<Connect>, addr: SocketAddr) -> Result<(Client, Receiver<Packet>)> {
         // TODO: Do connect packet validation here
+        if connect.client_id.is_empty() || connect.client_id.chars().next() == Some(' ') {
+            error!(self.logger, "Client shouldn't be empty or start with space");
+            return Err(Error::InvalidClientId)
+        }
+
         let (tx, rx) = mpsc::channel::<Packet>(100);
         let mut client = Client::new(&connect.client_id, addr, tx);
         client.set_keep_alive(connect.keep_alive);

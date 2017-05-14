@@ -27,7 +27,12 @@ quick_error! {
             cause(err)
             display("timer error: {}", err)
         }
-        InvalidMqttPacket
+        InvalidMqttPacket {
+            description("Invalid Mqtt Packet")
+        }
+        InvalidClientId {
+            description("Invalid Client ID")
+        }
         Other
     }
 }
