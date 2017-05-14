@@ -70,9 +70,11 @@ fn main() {
 
     let connections = listener.incoming().for_each(|(socket, addr)| {
         let framed = socket.framed(MqttCodec::new());
-        info!(logger, "🌟   new connection from {}", addr);
+        info!(logger, "☄️   new tcp connection from {}", addr);
         let broker_inner = broker_inner.clone();
         let error_logger = broker_inner.logger.clone();
+        let error_logger1 = broker_inner.logger.clone();
+
         let handshake = framed.into_future()
                                   .map_err(move |(err, _)| {
                                       error!(error_logger, "pre handshake error = {:?}", err);
@@ -84,7 +86,10 @@ fn main() {
 
                 if let Some(Packet::Connect(c)) = packet {
                     match broker.handle_connect(c, addr) {
-                        Ok((client, rx)) => Ok((framed, client, rx)),
+                        Ok((client, rx)) => {
+                            info!(error_logger1, "✨   mqtt connection successful. id = {:?}", client.id);
+                            Ok((framed, client, rx))
+                        }
                         Err(e) => Err(io::Error::new(io::ErrorKind::Other, e.description())),
                     }
                 } else {
