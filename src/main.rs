@@ -28,6 +28,7 @@ use std::fs::File;
 use std::io::{self, Read};
 use std::io::ErrorKind;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::error::Error as StdError;
 
 use mqtt3::*;
 use tokio_core::reactor::{Core, Interval};
@@ -36,11 +37,9 @@ use tokio_io::AsyncRead;
 
 use futures::stream::Stream;
 use futures::Future;
-use futures::sync::mpsc;
 
 use slog::{Logger, Drain};
 
-use client::Client;
 use broker::Broker;
 use codec::MqttCodec;
 use error::Error;
@@ -82,16 +81,12 @@ fn main() {
                                   .and_then(move |(packet,framed)| { // only accepted connections from here
 
                 let broker = broker_inner.clone();
+
                 if let Some(Packet::Connect(c)) = packet {
-                    // TODO: Do connect packet validation here
-                    let (tx, rx) = mpsc::channel::<Packet>(100);
-
-                    let mut client = Client::new(&c.client_id, addr, tx.clone());
-                    client.set_keep_alive(c.keep_alive);
-
-                    broker.add_client(client.clone());
-
-                    Ok((framed, client, rx))
+                    match broker.handle_connect(c, addr) {
+                        Ok((client, rx)) => Ok((framed, client, rx)),
+                        Err(e) => Err(io::Error::new(io::ErrorKind::Other, e.description())),
+                    }
                 } else {
                     Err(io::Error::new(io::ErrorKind::Other, "Invalid Handshake Packet"))
                 }
@@ -115,7 +110,7 @@ fn main() {
             
             // handle each connections n/w send and recv here
             if let Some((framed, client, rx)) = handshake {
-                let id = client.id.clone();
+                let id: String = client.id.clone();
                 let keep_alive = client.keep_alive;
                 let client_timer = client.clone();
 

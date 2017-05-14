@@ -48,7 +48,7 @@ pub struct Client {
     pub addr: SocketAddr,
     pub tx: Sender<Packet>,
     pub keep_alive: Option<Duration>,
-
+    pub clean_session: bool,
     pub state: Rc<RefCell<ClientState>>,
     logger: Logger,
 }
@@ -69,6 +69,7 @@ impl Client {
             id: id.to_string(),
             tx: tx,
             keep_alive: None,
+            clean_session: true,
             logger: logger,
             state: Rc::new(RefCell::new(state)),
         }
@@ -83,6 +84,10 @@ impl Client {
         } else {
             self.keep_alive = Some(Duration::new(t as u64, 0));
         }
+    }
+
+    pub fn set_persisent_session(&mut self) {
+        self.clean_session = false;
     }
 
     pub fn next_pkid(&self) -> PacketIdentifier {

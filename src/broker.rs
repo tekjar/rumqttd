@@ -2,6 +2,9 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::collections::{VecDeque, HashMap};
 use std::fmt::{self, Debug};
+use std::net::SocketAddr;
+
+use futures::sync::mpsc::{self, Receiver};
 
 use slog::{Logger, Drain};
 use slog_term;
@@ -151,6 +154,24 @@ impl Broker {
             Some(i) => state.incoming_comp.remove(i),
             None => None,
         };
+    }
+
+    pub fn handle_connect(&self, connect: Box<Connect>, addr: SocketAddr) -> Result<(Client, Receiver<Packet>)> {
+        // TODO: Do connect packet validation here
+        let (tx, rx) = mpsc::channel::<Packet>(100);
+        let mut client = Client::new(&connect.client_id, addr, tx);
+        client.set_keep_alive(connect.keep_alive);
+        if !connect.clean_session {
+            client.set_persisent_session();
+        }
+
+        self.add_client(client.clone());
+
+        Ok((client, rx))
+    }
+
+    pub fn handle_disconnect(&self, id: &str) -> Result<()> {
+        Ok(())
     }
 
     pub fn handle_subscribe(&self, subscribe: Box<Subscribe>, client: &Client) -> Result<()> {
