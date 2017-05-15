@@ -54,6 +54,11 @@ impl ClientState {
 #[derive(Clone)]
 pub struct Client {
     pub id: String,
+    // it's possible that new connections come with same client id
+    // as existing ones in the queues. broker will send disconnect request
+    // to eventloop immediately as this happens but uid will be useful to prevent removal of
+    // incorrect clients when eventloop catches up & cleans the client from queues.
+    pub uid: u16,
     pub addr: SocketAddr,
     pub tx: Sender<Packet>,
     pub keep_alive: Option<Duration>,
@@ -76,6 +81,7 @@ impl Client {
         Client {
             addr: addr,
             id: id.to_string(),
+            uid: 0,
             tx: tx,
             keep_alive: None,
             clean_session: true,
@@ -97,6 +103,10 @@ impl Client {
 
     pub fn set_persisent_session(&mut self) {
         self.clean_session = false;
+    }
+
+    pub fn set_uid(&mut self, id: u16) {
+        self.uid = id;
     }
 
     pub fn next_pkid(&self) -> PacketIdentifier {

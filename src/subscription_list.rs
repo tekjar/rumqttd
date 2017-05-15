@@ -50,18 +50,18 @@ impl SubscriptionList {
     }
 
     /// Remove a client from a subscription
-    pub fn remove_subscription_client(&mut self, topic: SubscribeTopic, id: &str) -> Result<()> {
+    pub fn remove_subscription_client(&mut self, topic: SubscribeTopic, id: &str, uid: u16) -> Result<()> {
         let topic_path = TopicPath::from_str(topic.topic_path.clone())?;
 
         if topic_path.wildcards {
             if let Some(clients) = self.wild.get_mut(&topic) {
-                if let Some(index) = clients.iter().position(|v| v.id == id) {
+                if let Some(index) = clients.iter().position(|v| v.id == id && v.uid == uid) {
                     clients.remove(index);
                 }
             }
         } else {
             if let Some(clients) = self.concrete.get_mut(&topic) {
-                if let Some(index) = clients.iter().position(|v| v.id == id) {
+                if let Some(index) = clients.iter().position(|v| v.id == id && v.uid == uid) {
                     clients.remove(index);
                 }
             }
@@ -70,15 +70,15 @@ impl SubscriptionList {
     }
 
     /// Remove a client from all the subscriptions
-    pub fn remove_client(&mut self, id: &str) -> Result<()> {
+    pub fn remove_client(&mut self, id: &str, uid: u16) -> Result<()> {
         for clients in self.concrete.values_mut() {
-            if let Some(index) = clients.iter().position(|v| v.id == id) {
+            if let Some(index) = clients.iter().position(|v| v.id == id && v.uid == uid) {
                 clients.remove(index);
             }
         }
 
         for clients in self.wild.values_mut() {
-            if let Some(index) = clients.iter().position(|v| v.id == id) {
+            if let Some(index) = clients.iter().position(|v| v.id == id && v.uid == uid) {
                 clients.remove(index);
             }
         }
@@ -153,9 +153,12 @@ mod test {
 
     #[test]
     fn remove_clients_from_list() {
-        let (c1, ..) = mock_client("mock-client-1");
-        let (c2, ..) = mock_client("mock-client-2");
-        let (c3, ..) = mock_client("mock-client-2");
+        let (mut c1, ..) = mock_client("mock-client-1");
+        let (mut c2, ..) = mock_client("mock-client-2");
+        let (mut c3, ..) = mock_client("mock-client-2");
+        c1.set_uid(1);
+        c2.set_uid(1);
+        c3.set_uid(2);
 
         let s1 = SubscribeTopic {
             topic_path: "hello/mqtt/rumqttd".to_owned(),
@@ -172,8 +175,8 @@ mod test {
         subscription_list.add_subscription(s2.clone(), c2).unwrap();
         subscription_list.add_subscription(s2.clone(), c3).unwrap();
 
-        subscription_list.remove_client("mock-client-1").unwrap();
-        subscription_list.remove_client("mock-client-2").unwrap();
+        subscription_list.remove_client("mock-client-1", 1).unwrap();
+        subscription_list.remove_client("mock-client-2", 1).unwrap();
 
         assert_eq!(0, subscription_list.concrete.get(&s1).unwrap().len());
         assert_eq!(1, subscription_list.wild.get(&s2).unwrap().len());
