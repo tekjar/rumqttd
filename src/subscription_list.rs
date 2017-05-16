@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::mem;
 
 use client::Client;
 use mqtt3::{TopicPath, SubscribeTopic, ToTopicPath};
@@ -21,47 +22,44 @@ impl SubscriptionList {
         }
     }
 
-    pub fn add_subscription(&mut self, topic: SubscribeTopic, client: Client) -> Result<bool> {
+    pub fn add_subscription(&mut self, topic: SubscribeTopic, client: Client) -> Result<()> {
         let topic_path = TopicPath::from_str(topic.topic_path.clone())?;
 
         if topic_path.wildcards {
             let clients = self.wild.entry(topic).or_insert(Vec::new());
             // add client to a subscription only if it doesn't already exist or
             // else replace the existing one
-            if clients.iter().any(|v| v.id == client.id) {
-                clients.push(client);
-                Ok(true)
+            if let Some(index) = clients.iter().position(|v| v.id == client.id) {
+                clients[index] = client;
             } else {
                 clients.push(client);
-                Ok(false)
             }
         } else {
             let clients = self.concrete.entry(topic).or_insert(Vec::new());
             // add client to a subscription only if it doesn't already exist or
             // else replace the existing one
-            if clients.iter().any(|v| v.id == client.id) {
-                clients.push(client);
-                Ok(true)
+            if let Some(index) = clients.iter().position(|v| v.id == client.id) {
+                clients[index] = client;
             } else {
                 clients.push(client);
-                Ok(false)
             }
         }
+        Ok(())
     }
 
-    /// Remove a client from a subscription
-    pub fn remove_subscription_client(&mut self, topic: SubscribeTopic, id: &str, uid: u16) -> Result<()> {
+    /// Remove a client with given id from a subscription
+    pub fn remove_subscription_client(&mut self, topic: SubscribeTopic, id: &str) -> Result<()> {
         let topic_path = TopicPath::from_str(topic.topic_path.clone())?;
 
         if topic_path.wildcards {
             if let Some(clients) = self.wild.get_mut(&topic) {
-                if let Some(index) = clients.iter().position(|v| v.id == id && v.uid == uid) {
+                if let Some(index) = clients.iter().position(|v| v.id == id) {
                     clients.remove(index);
                 }
             }
         } else {
             if let Some(clients) = self.concrete.get_mut(&topic) {
-                if let Some(index) = clients.iter().position(|v| v.id == id && v.uid == uid) {
+                if let Some(index) = clients.iter().position(|v| v.id == id) {
                     clients.remove(index);
                 }
             }
@@ -69,16 +67,45 @@ impl SubscriptionList {
         Ok(())
     }
 
-    /// Remove a client from all the subscriptions
-    pub fn remove_client(&mut self, id: &str, uid: u16) -> Result<()> {
+    // replace an existing client in list by matching id of 'client'. Unlike replacement that
+    // `add_subscription` does, this preserves client state but changes other parts like 'tx'
+    // to send n/w write requests to correct connection in the event loop
+    pub fn replace_client(&mut self, client: Client) -> Result<()> {
+        let id = client.id.clone();
+
         for clients in self.concrete.values_mut() {
-            if let Some(index) = clients.iter().position(|v| v.id == id && v.uid == uid) {
+            if let Some(index) = clients.iter().position(|v| v.id == id) {
+                let _ = mem::replace(&mut clients[index].uid, client.uid);
+                let _ = mem::replace(&mut clients[index].addr, client.addr);
+                let _ = mem::replace(&mut clients[index].tx, client.tx.clone());
+                let _ = mem::replace(&mut clients[index].keep_alive, client.keep_alive);
+                let _ = mem::replace(&mut clients[index].clean_session, client.clean_session);
+            }
+        }
+
+        for clients in self.wild.values_mut() {
+            if let Some(index) = clients.iter().position(|v| v.id == id) {
+                let _ = mem::replace(&mut clients[index].uid, client.uid);
+                let _ = mem::replace(&mut clients[index].addr, client.addr);
+                let _ = mem::replace(&mut clients[index].tx, client.tx.clone());
+                let _ = mem::replace(&mut clients[index].keep_alive, client.keep_alive);
+                let _ = mem::replace(&mut clients[index].clean_session, client.clean_session);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Remove a client from all the subscriptions
+    pub fn remove_client(&mut self, id: &str) -> Result<()> {
+        for clients in self.concrete.values_mut() {
+            if let Some(index) = clients.iter().position(|v| v.id == id) {
                 clients.remove(index);
             }
         }
 
         for clients in self.wild.values_mut() {
-            if let Some(index) = clients.iter().position(|v| v.id == id && v.uid == uid) {
+            if let Some(index) = clients.iter().position(|v| v.id == id) {
                 clients.remove(index);
             }
         }
@@ -86,7 +113,7 @@ impl SubscriptionList {
         Ok(())
     }
 
-    /// Get the list of subscribed clients for a given concrete subscription topic
+    /// For a given concrete topic, match topics & return list of subscribed clients
     pub fn get_subscribed_clients(&mut self, topic: SubscribeTopic) -> Result<Vec<Client>> {
         let topic_path = TopicPath::from_str(topic.topic_path.clone())?;
         let qos = topic.qos;
@@ -121,16 +148,18 @@ mod test {
     use super::SubscriptionList;
     use mqtt3::*;
 
-    fn mock_client(id: &str) -> (Client, Receiver<Packet>) {
+    fn mock_client(id: &str, uid: u8) -> (Client, Receiver<Packet>) {
         let (tx, rx) = mpsc::channel::<Packet>(8);
-        (Client::new(id, "127.0.0.1:80".parse().unwrap(), tx), rx)
+        let mut client = Client::new(id, "127.0.0.1:80".parse().unwrap(), tx);
+        client.uid = uid;
+        (client, rx)
     }
 
     #[test]
-    fn add_clients_to_list() {
-        let (c1, ..) = mock_client("mock-client-1");
-        let (c2, ..) = mock_client("mock-client-2");
-        let (c3, ..) = mock_client("mock-client-2");
+    fn add_clients_to_subscriptions_and_verify_wildcard_and_concrete_counts() {
+        let (c1, ..) = mock_client("mock-client-1", 0);
+        let (c2, ..) = mock_client("mock-client-2", 0);
+        let (c3, ..) = mock_client("mock-client-2", 10);
 
         let s1 = SubscribeTopic {
             topic_path: "hello/mqtt/rumqttd".to_owned(),
@@ -144,21 +173,20 @@ mod test {
 
         let mut subscription_list = SubscriptionList::new();
         subscription_list.add_subscription(s1.clone(), c1).unwrap();
+        // c2 & c3's client id is same, so previous one should be replaced
         subscription_list.add_subscription(s2.clone(), c2).unwrap();
         subscription_list.add_subscription(s2.clone(), c3).unwrap();
 
         assert_eq!(1, subscription_list.concrete.get(&s1).unwrap().len());
-        assert_eq!(2, subscription_list.wild.get(&s2).unwrap().len());
+        assert_eq!(1, subscription_list.wild.get(&s2).unwrap().len());
+        assert_eq!(10, subscription_list.wild.get(&s2).unwrap()[0].uid);
     }
 
     #[test]
-    fn remove_clients_from_list() {
-        let (mut c1, ..) = mock_client("mock-client-1");
-        let (mut c2, ..) = mock_client("mock-client-2");
-        let (mut c3, ..) = mock_client("mock-client-2");
-        c1.set_uid(1);
-        c2.set_uid(1);
-        c3.set_uid(2);
+    fn remove_clients_from_subscription_list_and_verify_wild_and_concrete_counts() {
+        let (c1, ..) = mock_client("mock-client-1", 0);
+        let (c2, ..) = mock_client("mock-client-2", 0);
+        let (c3, ..) = mock_client("mock-client-2", 1);
 
         let s1 = SubscribeTopic {
             topic_path: "hello/mqtt/rumqttd".to_owned(),
@@ -175,18 +203,35 @@ mod test {
         subscription_list.add_subscription(s2.clone(), c2).unwrap();
         subscription_list.add_subscription(s2.clone(), c3).unwrap();
 
-        subscription_list.remove_client("mock-client-1", 1).unwrap();
-        subscription_list.remove_client("mock-client-2", 1).unwrap();
+        subscription_list.remove_client("mock-client-1").unwrap();
+        subscription_list.remove_client("mock-client-2").unwrap();
 
         assert_eq!(0, subscription_list.concrete.get(&s1).unwrap().len());
-        assert_eq!(1, subscription_list.wild.get(&s2).unwrap().len());
+        assert_eq!(0, subscription_list.wild.get(&s2).unwrap().len());
+    }
+
+    #[test]
+    fn verify_uid_after_replacing_an_existing_client() {
+        let (c2, ..) = mock_client("mock-client-2", 0);
+        let (c3, ..) = mock_client("mock-client-2", 10);
+
+        let s2 = SubscribeTopic {
+            topic_path: "hello/+/rumqttd".to_owned(),
+            qos: QoS::AtMostOnce,
+        };
+
+        let mut subscription_list = SubscriptionList::new();
+        subscription_list.add_subscription(s2.clone(), c2).unwrap();
+        subscription_list.replace_client(c3).unwrap();
+
+        assert_eq!(10, subscription_list.wild.get(&s2).unwrap()[0].uid);
     }
 
     #[test]
     fn match_topics_with_wild_card_and_concrete_subscription_clients() {
-        let (c1, ..) = mock_client("mock-client-1");
-        let (c2, ..) = mock_client("mock-client-2");
-        let (c3, ..) = mock_client("mock-client-3");
+        let (c1, ..) = mock_client("mock-client-1", 0);
+        let (c2, ..) = mock_client("mock-client-2", 0);
+        let (c3, ..) = mock_client("mock-client-3", 0);
 
         let s1 = SubscribeTopic {
             topic_path: "hello/mqtt/rumqttd".to_owned(),
@@ -225,7 +270,7 @@ mod test {
     /// subscription("a/+/c", atmostonce) shouldn't match with ("a/b/c", atleastonce)
     #[test]
     fn dont_match_subscription_with_matching_topic_but_nonmatching_qos(){
-        let (c1, ..) = mock_client("mock-client-1");
+        let (c1, ..) = mock_client("mock-client-1", 0);
         let s1 = SubscribeTopic {
             topic_path: "hello/+/rumqttd".to_owned(),
             qos: QoS::AtMostOnce,
@@ -247,7 +292,7 @@ mod test {
     #[test]
     #[should_panic]
     fn dont_allow_subscription_with_multiwildcard_inbetween_topic() {
-        let (c1, ..) = mock_client("mock-client-1");
+        let (c1, ..) = mock_client("mock-client-1", 0);
         let s1 = SubscribeTopic {
             topic_path: "hello/#/rumqttd".to_owned(),
             qos: QoS::AtMostOnce,

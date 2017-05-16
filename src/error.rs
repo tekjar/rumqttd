@@ -27,6 +27,9 @@ quick_error! {
             cause(err)
             display("timer error: {}", err)
         }
+        ClientIdExists {
+            description("Client with that ID already exists")
+        }
         InvalidMqttPacket {
             description("Invalid Mqtt Packet")
         }

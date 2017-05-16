@@ -1,9 +1,10 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap};
+use std::mem;
 
 use mqtt3::Packet;
 
 use client::Client;
-use error::Result;
+use error::{Result, Error};
 
 #[derive(Debug)]
 pub struct ClientList {
@@ -14,7 +15,7 @@ pub struct ClientList {
     // handling happens in main through a channel, to prevent removal of
     // the new client (incase we replaced using insert() when using 
     // Hashmap<String, Client>) we use a vec where old client will be remove first
-    list: HashMap<String, VecDeque<Client>>,
+    list: HashMap<String, Client>,
 }
 
 impl ClientList {
@@ -24,51 +25,54 @@ impl ClientList {
         }
     }
 
-    pub fn add_client(&mut self, client: Client) -> Result<bool> {
-        if let Some(clients) = self.list.get_mut(&client.id) {
-            clients.push_back(client);
-            return Ok(true)
+    pub fn add_client(&mut self, client: Client) -> Result<()> {
+        if let Some(_) = self.list.get_mut(&client.id) {
+            return Err(Error::ClientIdExists)
         }
 
-        let mut clients = VecDeque::new();
         let id = client.id.clone();
-        clients.push_back(client);
-        self.list.insert(id, clients);
+        self.list.insert(id, client);
         
-        Ok(false)
+        Ok(())
     }
 
-    pub fn remove_client(&mut self, id: &str, uid: u16) -> Result<()> {
-        if let Some(clients) = self.list.get_mut(id) {
-            if let Some(index) = clients.iter().position(|v| v.uid == uid) {
-                clients.remove(index);
-            }
+    // this preserves client state but changes other parts like 'tx'
+    // to send n/w write requests to correct connection in the event loop
+    pub fn replace_client(&mut self, client: Client) -> Result<()> {
+        if let Some(c) = self.list.get_mut(&client.id) {
+            let _ = mem::replace(&mut c.uid, client.uid);
+            let _ = mem::replace(&mut c.addr, client.addr);
+            let _ = mem::replace(&mut c.tx, client.tx);
+            let _ = mem::replace(&mut c.keep_alive, client.keep_alive);
+            let _ = mem::replace(&mut c.clean_session, client.clean_session);
+        }
+        Ok(())
+    }
+
+    pub fn remove_client(&mut self, id: &str) -> Result<()> {
+        self.list.remove(id);
+        Ok(())
+    }
+
+    // ask a particular client from the list to perform a send
+    pub fn send(&self, id: &str, packet: Packet) -> Result<()> {
+        if let Some(client) = self.list.get(id) {
+            client.send(packet);
         }
         Ok(())
     }
 
     // check if there are clients existing with this id & return a list of uids if so
-    pub fn has_client(&self, id: &str) -> Option<Vec<u16>> {
-        if let Some(clients) = self.list.get(id) {
-            if clients.len() != 0 {
-                let mut uids = vec![];
-                for client in clients {
-                    uids.push(client.uid)
-                }
-                return Some(uids)
-            }
-        }
-        None
+    pub fn has_client(&self, id: &str) -> bool {
+        self.list.contains_key(id)
     }
 
-    // ask a particular client from the list to perform a send
-    pub fn send(&self, id: &str, uid: u16, packet: Packet) -> Result<()> {
-        if let Some(clients) = self.list.get(id) {
-            if let Some(index) = clients.iter().position(|v| v.uid == uid) {
-                clients[index].send(packet);
-            }
+    // get uid of client for given client id
+    pub fn get_uid(&self, id: &str) -> Option<u8> {
+        if let Some(client) = self.list.get(id) {
+            return Some(client.uid)
         }
-        Ok(())
+        None
     }
 }
 
@@ -79,56 +83,55 @@ mod test {
     use super::ClientList;
     use mqtt3::*;
 
-    fn mock_client(id: &str) -> (Client, Receiver<Packet>) {
+    fn mock_client(id: &str, uid: u8) -> (Client, Receiver<Packet>) {
         let (tx, rx) = mpsc::channel::<Packet>(8);
-        (Client::new(id, "127.0.0.1:80".parse().unwrap(), tx), rx)
+        let mut client = Client::new(id, "127.0.0.1:80".parse().unwrap(), tx);
+        client.uid = uid;
+        (client, rx)
     }
 
     #[test]
     fn add_clients_to_list() {
-        let (mut c1, ..) = mock_client("mock-client-1");
-        let (mut c2, ..) = mock_client("mock-client-2");
-        let (mut c3, ..) = mock_client("mock-client-2");
+        let (c1, ..) = mock_client("mock-client-1", 0);
+        let (c2, ..) = mock_client("mock-client-2", 0);
+        let (c3, ..) = mock_client("mock-client-2", 10);
 
         let mut client_list = ClientList::new();
-        c1.set_uid(1);
         let r = client_list.add_client(c1);
-        assert_eq!(false, r.unwrap());
+        assert_eq!((), r.unwrap());
 
-        c2.set_uid(1);
         let r = client_list.add_client(c2);
-        assert_eq!(false, r.unwrap());
+        assert_eq!((), r.unwrap());
 
-        c3.set_uid(2);
         let r = client_list.add_client(c3);
-        assert_eq!(true, r.unwrap());
-
-        assert_eq!(1, client_list.list.get("mock-client-1").unwrap().len());
-        assert_eq!(2, client_list.list.get("mock-client-2").unwrap().len());
+        assert_eq!(true, r.is_err());
     }
 
     #[test]
     fn remove_clients_from_list() {
-        let (mut c1, ..) = mock_client("mock-client-1");
-        let (mut c2, ..) = mock_client("mock-client-2");
-        let (mut c3, ..) = mock_client("mock-client-2");
-        let (mut c4, ..) = mock_client("mock-client-2");
+        let (c1, ..) = mock_client("mock-client-1", 0);
+        let (c2, ..) = mock_client("mock-client-2", 3);
 
         let mut client_list = ClientList::new();
-        c1.set_uid(1);
         let _ = client_list.add_client(c1);
-        c2.set_uid(1);
         let _ = client_list.add_client(c2);
-        c3.set_uid(2);
-        let _ = client_list.add_client(c3);
-        c4.set_uid(3);
-        let _ = client_list.add_client(c4);
 
-        client_list.remove_client("mock-client-2", 1).unwrap();
-        client_list.remove_client("mock-client-2", 3).unwrap();
+        client_list.remove_client("mock-client-1").unwrap();
+        client_list.remove_client("mock-client-2").unwrap();
 
-        assert_eq!(1, client_list.list.get("mock-client-1").unwrap().len());
-        assert_eq!(1, client_list.list.get("mock-client-2").unwrap().len());
-        assert_eq!(2, client_list.list.get("mock-client-2").unwrap()[0].uid);
+        assert_eq!(false, client_list.list.contains_key("mock-client-1"));
+        assert_eq!(false, client_list.list.contains_key("mock-client-2"));
+    }
+
+    #[test]
+    fn verify_uid_after_replacing_an_existing_client() {
+        let (c2, ..) = mock_client("mock-client-2", 0);
+        let (c3, ..) = mock_client("mock-client-2", 10);
+
+        let mut client_list = ClientList::new();
+        client_list.add_client(c2).unwrap();
+        client_list.replace_client(c3).unwrap();
+
+        assert_eq!(10, client_list.list.get("mock-client-2").unwrap().uid);
     }
 }

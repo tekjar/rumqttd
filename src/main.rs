@@ -117,7 +117,6 @@ fn main() {
             // handle each connections n/w send and recv here
             if let Some((framed, client, rx)) = handshake {
                 let id: String = client.id.clone();
-                let uid = client.uid;
                 let keep_alive = client.keep_alive;
                 let client_timer = client.clone();
 
@@ -207,7 +206,7 @@ fn main() {
                 let connection = rx_future.select(tx_future);
                 let c = connection.then(move |_| {
                                             error!(broker_inner.logger, "disconnecting client: {:?}", id);
-                                            let _ = broker_inner.handle_disconnect(&id, uid);
+                                            let _ = broker_inner.handle_disconnect(&id);
                                             Ok::<_, ()>(())
                                         });
 
