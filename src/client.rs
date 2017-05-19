@@ -192,7 +192,6 @@ impl Client {
 
     pub fn remove_publish(&self, pkid: PacketIdentifier) -> Option<Box<Publish>> {
         let mut state = self.state.borrow_mut();
-
         if let Some(index) = state.outgoing_pub
                                   .iter()
                                   .position(|x| x.pid == Some(pkid)) {
@@ -306,6 +305,12 @@ impl Client {
 
     pub fn queues(&self) {
         let state = self.state.borrow();
+
+        print!("OUTGOING PUB = [");
+        for e in state.outgoing_pub.iter() {
+            print!("{:?} ", e.pid);
+        }
+        println!(" ]");
 
         print!("OUTGOING REC = [");
         for e in state.outgoing_rec.iter() {

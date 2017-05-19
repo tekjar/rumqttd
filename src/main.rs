@@ -199,9 +199,6 @@ fn main() {
                                       Ok::<_, ()>(())
                                   })
                                   .then(move |_| {
-                                      // NOTE: Don't do any disconnection handling based on client id here as it might
-                                      // end up cleaning wrong (replaced) client when this kicks on
-                                      // TODO: Garbage collect disconnected clients periodically instead
                                       Ok::<_, ()>(())
                                   });
 

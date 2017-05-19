@@ -38,15 +38,20 @@ impl ClientList {
 
     // this preserves client state but changes other parts like 'tx'
     // to send n/w write requests to correct connection in the event loop
-    pub fn replace_client(&mut self, client: Client) -> Result<()> {
+    // and returns replaced client (this propogates all the way backwards
+    // to 'main' event loop to be able to pass it to 'handle_x' methods used
+    // there)
+    pub fn replace_client(&mut self, client: Client) -> Result<Client> {
         if let Some(c) = self.list.get_mut(&client.id) {
+            c.set_status(ConnectionStatus::Connected);
             let _ = mem::replace(&mut c.uid, client.uid);
             let _ = mem::replace(&mut c.addr, client.addr);
             let _ = mem::replace(&mut c.tx, client.tx);
             let _ = mem::replace(&mut c.keep_alive, client.keep_alive);
             let _ = mem::replace(&mut c.clean_session, client.clean_session);
+            return Ok(c.clone())
         }
-        Ok(())
+        Err(Error::NoClient)
     }
 
     pub fn remove_client(&mut self, id: &str, uid: u8) -> Result<()> {
@@ -68,6 +73,14 @@ impl ClientList {
     pub fn send(&self, id: &str, packet: Packet) -> Result<()> {
         if let Some(client) = self.list.get(id) {
             client.send(packet);
+        }
+        Ok(())
+    }
+
+    // ask a particular client from the list to perform backlog send
+    pub fn send_all_backlogs(&self, id: &str) -> Result<()> {
+        if let Some(client) = self.list.get(id) {
+            client.send_all_backlogs();
         }
         Ok(())
     }

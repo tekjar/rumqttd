@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::mem;
 
-use client::Client;
+use client::{Client, ConnectionStatus};
 use mqtt3::{TopicPath, SubscribeTopic, ToTopicPath};
 use error::Result;
 
@@ -75,6 +75,7 @@ impl SubscriptionList {
 
         for clients in self.concrete.values_mut() {
             if let Some(index) = clients.iter().position(|v| v.id == id) {
+                clients[index].set_status(ConnectionStatus::Connected);
                 let _ = mem::replace(&mut clients[index].uid, client.uid);
                 let _ = mem::replace(&mut clients[index].addr, client.addr);
                 let _ = mem::replace(&mut clients[index].tx, client.tx.clone());

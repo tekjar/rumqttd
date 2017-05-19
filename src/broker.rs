@@ -73,7 +73,7 @@ impl Broker {
     }
 
     /// Adds a new client to the broker
-    pub fn add_client(&self, mut client: Client) -> Result<()> {
+    pub fn add_client(&self, mut client: Client) -> Result<Client> {
         let mut clients = self.clients.borrow_mut();
         let id = client.id.clone();
 
@@ -94,10 +94,15 @@ impl Broker {
                 clients.send(&client.id, Packet::Disconnect)?;
             }
 
-            clients.replace_client(client).unwrap();
-            Ok(())
+            // replace old client not state members to new new client's members
+            let client = clients.replace_client(client).unwrap();
+            client.send_all_backlogs();
+
+            // return replaced client which has old 'state' information
+            Ok(client)
         } else {
-            clients.add_client(client)
+            clients.add_client(client.clone()).unwrap();
+            Ok(client)
         }
     }
 
@@ -203,7 +208,7 @@ impl Broker {
             client.set_persisent_session();
         }
 
-        self.add_client(client.clone())?;
+        let client = self.add_client(client)?;
 
         Ok((client, rx))
     }
@@ -446,14 +451,15 @@ mod test {
 
     #[test]
     fn add_clients_with_same_ids_to_broker_and_verify_uids() {
-        let (c1, ..) = mock_client("mock-client-1", 1);
-        let (c2, ..) = mock_client("mock-client-1", 2);
-        let (c3, ..) = mock_client("mock-client-1", 3);
-        let (c4, ..) = mock_client("mock-client-1", 4);
-        let (c5, ..) = mock_client("mock-client-1", 5);
+        let (c1, ..) = mock_client("mock-client-1", 0);
+        let (c2, ..) = mock_client("mock-client-1", 0);
+        let (c3, ..) = mock_client("mock-client-1", 0);
+        let (c4, ..) = mock_client("mock-client-1", 0);
+        let (c5, ..) = mock_client("mock-client-1", 0);
 
         let broker = Broker::new();
 
+        // replaces previous clients with new uids
         broker.add_client(c1).unwrap();
         broker.add_client(c2).unwrap();
         broker.add_client(c3).unwrap();
@@ -461,7 +467,7 @@ mod test {
         broker.add_client(c5).unwrap();
 
         if let Some(uid) = broker.get_uid("mock-client-1") {
-            assert_eq!(5, uid);
+            assert_eq!(4, uid);
         } else {
             assert!(false);
         }
@@ -529,12 +535,11 @@ mod test {
         assert_eq!(ConnectionStatus::Connected, c1.status());
         broker.add_client(c1.clone()).unwrap();
 
-
         // add c1 to to s1, s2, s3 & s4
         broker.add_subscription_client(s1.clone(), c1.clone()).unwrap();
         
         // change connection status of a client in 'clients'
-        broker.handle_disconnect("mock-client-1", 0, true).unwrap();
+        broker.handle_disconnect("mock-client-1", 0, false).unwrap();
 
         let subscribed_clients = broker.get_subscribed_clients(s1).unwrap();
         assert_eq!(ConnectionStatus::Disconnected, subscribed_clients[0].status());
