@@ -49,12 +49,36 @@ impl ClientState {
             outgoing_comp: VecDeque::new(),
         }
     }
+
+    pub fn clear(&mut self) {
+        self.outgoing_pub.clear();
+        self.outgoing_rec.clear();
+        self.outgoing_rel.clear();
+        self.outgoing_comp.clear();
+
+        self.last_pkid = PacketIdentifier(0);
+    }
+
+    pub fn stats(&self) -> (ConnectionStatus, PacketIdentifier, usize, usize, usize, usize) {
+        (
+            self.status,
+            self.last_pkid,
+            self.outgoing_pub.len(),
+            self.outgoing_rec.len(),
+            self.outgoing_rel.len(), 
+            self.outgoing_comp.len()
+        )
+    }
 }
 
+
+// a shared state client. same client will be cloned across subscriptions &
+// clients in the broker. except for the tx handle, all other immutables are
+// in Rc to share across
 #[derive(Clone)]
 pub struct Client {
     pub id: String,
-    pub uid: u8, // unique id for verifying replacements in unittests
+    pub uid: u8, // unique id for handling disconnections from eventloop
     pub addr: SocketAddr,
     pub tx: Sender<Packet>,
     pub keep_alive: Option<Duration>,
@@ -65,7 +89,7 @@ pub struct Client {
 
 impl Debug for Client {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, " [  id = {:?}, address = {:?}\n ]", self.id, self.addr)
+        write!(f, " [  id = {:?}, uid = {:?}, address = {:?}]", self.id, self.uid, self.addr)
     }
 }
 
@@ -101,6 +125,10 @@ impl Client {
         self.clean_session = false;
     }
 
+    pub fn set_uid(&mut self, uid: u8) {
+        self.uid = uid;
+    }
+
     pub fn next_pkid(&self) -> PacketIdentifier {
         let mut state = self.state.borrow_mut();
         let PacketIdentifier(mut pkid) = state.last_pkid;
@@ -111,8 +139,21 @@ impl Client {
         state.last_pkid
     }
 
+    pub fn clear(&self) {
+        self.state.borrow_mut().clear();
+    }
+
     pub fn status(&self) -> ConnectionStatus {
         self.state.borrow().status
+    }
+
+    pub fn stats(&self) -> (ConnectionStatus, PacketIdentifier, usize, usize, usize, usize) {
+        self.state.borrow().stats()
+    }
+
+    pub fn set_status(&self, s: ConnectionStatus) {
+        let mut state = self.state.borrow_mut();
+        state.status = s;
     }
 
     // reset the last control packet received time
@@ -214,6 +255,26 @@ impl Client {
 
     pub fn send(&self, packet: Packet) {
         let _ = self.tx.clone().send(packet).wait();
+    }
+
+    pub fn send_all_backlogs(&self) {
+        let mut state = self.state.borrow_mut();
+
+        for packet in state.outgoing_pub.iter() {
+            self.send(Packet::Publish(packet.clone()));
+        }
+
+        for packet in state.outgoing_rec.iter() {
+            self.send(Packet::Publish(packet.clone()));
+        }
+
+        for packet in state.outgoing_rel.iter() {
+            self.send(Packet::Pubrel(packet.clone()));
+        }
+
+        for packet in state.outgoing_comp.iter_mut() {
+            self.send(Packet::Pubcomp(packet.clone()));
+        }
     }
 
     pub fn suback_packet(&self, pkid: PacketIdentifier, return_codes: Vec<SubscribeReturnCodes>) -> Box<Suback> {

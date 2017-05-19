@@ -62,7 +62,7 @@ impl Broker {
         }
     }
 
-    pub fn has_client(&self, id: &str) -> bool {
+    pub fn has_client(&self, id: &str) -> Option<u8> {
         let clients = self.clients.borrow();
         clients.has_client(id)
     }
@@ -73,10 +73,27 @@ impl Broker {
     }
 
     /// Adds a new client to the broker
-    pub fn add_client(&self, client: Client) -> Result<()> {
+    pub fn add_client(&self, mut client: Client) -> Result<()> {
         let mut clients = self.clients.borrow_mut();
-        if clients.has_client(&client.id) {
-            clients.send(&client.id, Packet::Disconnect)?;
+        let id = client.id.clone();
+
+        // there is already a client existing with this id, 
+        // send disconnect request this client's handle & replace this client
+        if let Some(uid) = clients.has_client(&id) {
+            // if clean session is set for new client, clean the old client's state
+            // before replacing
+            if client.clean_session {
+                clients.clear(&client.id, client.uid).unwrap();
+            }
+
+            // change the unique id of the new client
+            client.set_uid(uid + 1);
+
+            // send disconnect packet if the client is still connected
+            if clients.status(&client.id).unwrap() == ConnectionStatus::Connected {
+                clients.send(&client.id, Packet::Disconnect)?;
+            }
+
             clients.replace_client(client).unwrap();
             Ok(())
         } else {
@@ -104,10 +121,10 @@ impl Broker {
     }
 
     // Remove the client from broker (including subscriptions)
-    pub fn remove_client(&self, id: &str) -> Result<()> {
-        self.clients.borrow_mut().remove_client(id)?;
+    pub fn remove_client(&self, id: &str, uid: u8) -> Result<()> {
+        self.clients.borrow_mut().remove_client(id, uid)?;
         let mut subscriptions = self.subscriptions.borrow_mut();
-        subscriptions.remove_client(id)
+        subscriptions.remove_client(id, uid)
     }
 
     // TODO: Find out if broker should drop message if a new massage with existing
@@ -191,8 +208,25 @@ impl Broker {
         Ok((client, rx))
     }
 
-    pub fn handle_disconnect(&self, id: &str) -> Result<()> {
-        // self.remove_client(id)
+    // clears the session state in case of clean session
+    // NOTE: Don't do anything based on just client id here because this method
+    // is called asynchronously on the eventloop. It is possible that disconnect is
+    // sent to event loop because of new connections just before client 'replace' 
+    // happens and removing client based on just ID here might remove the replaced
+    // client from queues
+    pub fn handle_disconnect(&self, id: &str, uid: u8, clean_session: bool) -> Result<()> {
+        {
+            let clients = self.clients.borrow_mut();
+            clients.set_status(id, uid, ConnectionStatus::Disconnected).unwrap();
+            if clean_session {
+                let _ = clients.clear(id, uid);
+            }
+        }
+        
+        if clean_session {
+            self.remove_client(id, uid).unwrap();
+        }
+
         Ok(())
     }
 
@@ -235,6 +269,7 @@ impl Broker {
                     _ => (),
                 }
 
+                // forward to eventloop only when client status is Connected
                 match client.status() {
                     ConnectionStatus::Connected => client.send(packet),
                     _ => (),
@@ -370,7 +405,7 @@ fn rumqttd_logger() -> Logger {
 #[cfg(test)]
 mod test {
     use futures::sync::mpsc::{self, Receiver};
-    use client::Client;
+    use client::{Client, ConnectionStatus};
     use super::Broker;
     use mqtt3::*;
 
@@ -400,8 +435,8 @@ mod test {
         let broker_alias = broker.clone();
 
         // remove c1 & c2 from all subscriptions and verify clients
-        broker_alias.remove_client(&c1.id).unwrap();
-        broker_alias.remove_client(&c2.id).unwrap();
+        broker_alias.remove_client(&c1.id, 0).unwrap();
+        broker_alias.remove_client(&c2.id, 0).unwrap();
 
         for s in [s1].iter() {
             let clients = broker.get_subscribed_clients(s.clone()).unwrap();
@@ -448,10 +483,10 @@ mod test {
         broker.add_client(c4).unwrap();
         broker.add_client(c5).unwrap();
 
-        broker.remove_client("mock-client-1").unwrap();
-        broker.remove_client("mock-client-1").unwrap();
+        broker.remove_client("mock-client-1", 5).unwrap();
+        broker.remove_client("mock-client-1", 5).unwrap();
 
-        if broker.has_client("mock-client-1") {
+        if let Some(_) = broker.has_client("mock-client-1") {
             assert!(false);
         } else {
             assert!(true);
@@ -479,5 +514,29 @@ mod test {
             assert_eq!(pkid3, *it.next().unwrap());
             assert_eq!(None, it.next());
         }
+    }
+
+    #[test]
+    fn change_connection_status_of_clients_and_verify_status_in_subscriptions() {
+        let (c1, ..) = mock_client("mock-client-1", 0);
+
+        let s1 = SubscribeTopic {
+            topic_path: "hello/mqtt".to_owned(),
+            qos: QoS::AtMostOnce,
+        };
+
+        let broker = Broker::new();
+        assert_eq!(ConnectionStatus::Connected, c1.status());
+        broker.add_client(c1.clone()).unwrap();
+
+
+        // add c1 to to s1, s2, s3 & s4
+        broker.add_subscription_client(s1.clone(), c1.clone()).unwrap();
+        
+        // change connection status of a client in 'clients'
+        broker.handle_disconnect("mock-client-1", 0, true).unwrap();
+
+        let subscribed_clients = broker.get_subscribed_clients(s1).unwrap();
+        assert_eq!(ConnectionStatus::Disconnected, subscribed_clients[0].status());
     }
 }

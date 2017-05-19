@@ -97,15 +97,15 @@ impl SubscriptionList {
     }
 
     /// Remove a client from all the subscriptions
-    pub fn remove_client(&mut self, id: &str) -> Result<()> {
+    pub fn remove_client(&mut self, id: &str, uid: u8) -> Result<()> {
         for clients in self.concrete.values_mut() {
-            if let Some(index) = clients.iter().position(|v| v.id == id) {
+            if let Some(index) = clients.iter().position(|v| v.id == id && v.uid == uid) {
                 clients.remove(index);
             }
         }
 
         for clients in self.wild.values_mut() {
-            if let Some(index) = clients.iter().position(|v| v.id == id) {
+            if let Some(index) = clients.iter().position(|v| v.id == id && v.uid == uid) {
                 clients.remove(index);
             }
         }
@@ -203,8 +203,49 @@ mod test {
         subscription_list.add_subscription(s2.clone(), c2).unwrap();
         subscription_list.add_subscription(s2.clone(), c3).unwrap();
 
-        subscription_list.remove_client("mock-client-1").unwrap();
-        subscription_list.remove_client("mock-client-2").unwrap();
+        subscription_list.remove_client("mock-client-1", 0).unwrap();
+        subscription_list.remove_client("mock-client-2", 1).unwrap();
+
+        assert_eq!(0, subscription_list.concrete.get(&s1).unwrap().len());
+        assert_eq!(0, subscription_list.wild.get(&s2).unwrap().len());
+    }
+
+    #[test]
+    fn remove_non_existant_clients_from_subscription_list_and_verify_counts() {
+        let (c1, ..) = mock_client("mock-client-1", 0);
+        let (c2, ..) = mock_client("mock-client-1", 1);
+
+        let (c3, ..) = mock_client("mock-client-2", 0);
+        let (c4, ..) = mock_client("mock-client-2", 1);
+
+        let s1 = SubscribeTopic {
+            topic_path: "hello/mqtt/rumqttd".to_owned(),
+            qos: QoS::AtMostOnce,
+        };
+
+        let s2 = SubscribeTopic {
+            topic_path: "hello/+/rumqttd".to_owned(),
+            qos: QoS::AtMostOnce,
+        };
+
+        let mut subscription_list = SubscriptionList::new();
+        subscription_list.add_subscription(s1.clone(), c1).unwrap();
+        // will replace the old client
+        subscription_list.add_subscription(s1.clone(), c2).unwrap();
+        subscription_list.add_subscription(s2.clone(), c3).unwrap();
+        // will replace the old client
+        subscription_list.add_subscription(s2.clone(), c4).unwrap();
+
+        // remove clients with wrong uids
+        subscription_list.remove_client("mock-client-1", 0).unwrap();
+        subscription_list.remove_client("mock-client-2", 0).unwrap();
+
+        assert_eq!(1, subscription_list.concrete.get(&s1).unwrap().len());
+        assert_eq!(1, subscription_list.wild.get(&s2).unwrap().len());
+
+        // remove clients with correct uids
+        subscription_list.remove_client("mock-client-1", 1).unwrap();
+        subscription_list.remove_client("mock-client-2", 1).unwrap();
 
         assert_eq!(0, subscription_list.concrete.get(&s1).unwrap().len());
         assert_eq!(0, subscription_list.wild.get(&s2).unwrap().len());

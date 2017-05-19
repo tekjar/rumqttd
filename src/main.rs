@@ -114,9 +114,13 @@ fn main() {
                             .map(move |handshake| {
             let broker_handshake = broker_inner.clone();
             
-            // handle each connections n/w send and recv here
+            // handle each connections n/w send and recv here.
+            // each connection will have one event loop handler and lot of aliased
+            // clients with shared state that can communicate with this eventloop handler
             if let Some((framed, client, rx)) = handshake {
                 let id: String = client.id.clone();
+                let uid = client.uid;
+                let clean_session = client.clean_session;
                 let keep_alive = client.keep_alive;
                 let client_timer = client.clone();
 
@@ -191,11 +195,13 @@ fn main() {
                                        })
                                   .forward(sender)
                                   .map_err(move |e| {
-                                      error!(error_logger, "network transmission error = {:?}", e);
+                                      error!(error_logger, "transmission error = {:?}", e);
                                       Ok::<_, ()>(())
                                   })
                                   .then(move |_| {
-                                      // broker_handshake.handle_disconnect(&id);
+                                      // NOTE: Don't do any disconnection handling based on client id here as it might
+                                      // end up cleaning wrong (replaced) client when this kicks on
+                                      // TODO: Garbage collect disconnected clients periodically instead
                                       Ok::<_, ()>(())
                                   });
 
@@ -206,7 +212,7 @@ fn main() {
                 let connection = rx_future.select(tx_future);
                 let c = connection.then(move |_| {
                                             error!(broker_inner.logger, "disconnecting client: {:?}", id);
-                                            let _ = broker_inner.handle_disconnect(&id);
+                                            let _ = broker_inner.handle_disconnect(&id, uid, clean_session);
                                             Ok::<_, ()>(())
                                         });
 

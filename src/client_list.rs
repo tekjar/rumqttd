@@ -1,9 +1,9 @@
 use std::collections::{HashMap};
 use std::mem;
 
-use mqtt3::Packet;
+use mqtt3::{Packet, PacketIdentifier};
 
-use client::Client;
+use client::{Client, ConnectionStatus};
 use error::{Result, Error};
 
 #[derive(Debug)]
@@ -49,8 +49,18 @@ impl ClientList {
         Ok(())
     }
 
-    pub fn remove_client(&mut self, id: &str) -> Result<()> {
-        self.list.remove(id);
+    pub fn remove_client(&mut self, id: &str, uid: u8) -> Result<()> {
+        let mut should_remove = false;
+
+        if let Some(client) = self.list.get_mut(id) {
+            if client.uid == uid {
+                should_remove = true;
+            }
+        }
+
+        if should_remove {
+            self.list.remove(id);
+        }
         Ok(())
     }
 
@@ -62,9 +72,53 @@ impl ClientList {
         Ok(())
     }
 
+    // Set conneciton status of client with given id 
+    pub fn set_status(&self, id: &str, uid: u8, status: ConnectionStatus) -> Result<()> {
+        if let Some(client) = self.list.get(id) {
+            if client.uid == uid {
+                client.set_status(status);
+            }
+            Ok(())
+        } else {
+            Err(Error::NoClient)
+        }
+    }
+
+    // Set conneciton status of client with given id 
+    pub fn status(&self, id: &str) -> Option<ConnectionStatus> {
+        if let Some(client) = self.list.get(id) {
+            Some(client.status())
+        } else {
+            None
+        }
+    }
+
+    pub fn clear(&self, id: &str, uid: u8) -> Result<()> {
+        if let Some(client) = self.list.get(id) {
+            if client.uid == uid {
+                client.clear();
+            }
+            Ok(())
+        } else {
+            Err(Error::NoClient)
+        }
+    }
+
+    pub fn stats(&self, id: &str) -> Result<(ConnectionStatus, PacketIdentifier, usize, usize, usize, usize)> {
+        if let Some(client) = self.list.get(id) {
+            Ok(client.stats())
+        } else {
+            Err(Error::NoClient)
+        }
+    }
+
     // check if there are clients existing with this id & return a list of uids if so
-    pub fn has_client(&self, id: &str) -> bool {
-        self.list.contains_key(id)
+    pub fn has_client(&self, id: &str) -> Option<u8> {
+        if let Some(client) = self.list.get(id) {
+            Some(client.uid)
+        } else {
+            None
+        }
     }
 
     // get uid of client for given client id
@@ -116,10 +170,24 @@ mod test {
         let _ = client_list.add_client(c1);
         let _ = client_list.add_client(c2);
 
-        client_list.remove_client("mock-client-1").unwrap();
-        client_list.remove_client("mock-client-2").unwrap();
+        client_list.remove_client("mock-client-1", 0).unwrap();
+        client_list.remove_client("mock-client-2", 3).unwrap();
 
         assert_eq!(false, client_list.list.contains_key("mock-client-1"));
+        assert_eq!(false, client_list.list.contains_key("mock-client-2"));
+    }
+
+    #[test]
+    fn remove_non_existant_uid_clients_from_list() {
+        let (c1, ..) = mock_client("mock-client-1", 1);
+
+        let mut client_list = ClientList::new();
+        let _ = client_list.add_client(c1);
+
+        client_list.remove_client("mock-client-1", 0).unwrap();
+        assert_eq!(true, client_list.list.contains_key("mock-client-1"));
+
+        client_list.remove_client("mock-client-1", 1).unwrap();
         assert_eq!(false, client_list.list.contains_key("mock-client-2"));
     }
 

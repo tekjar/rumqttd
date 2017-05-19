@@ -27,6 +27,9 @@ quick_error! {
             cause(err)
             display("timer error: {}", err)
         }
+        NoClient {
+            description("No client with this ID")
+        }
         ClientIdExists {
             description("Client with that ID already exists")
         }
