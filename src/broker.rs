@@ -409,6 +409,8 @@ fn rumqttd_logger() -> Logger {
 
 #[cfg(test)]
 mod test {
+    use std::net::{SocketAddr, IpAddr, Ipv4Addr};
+
     use futures::sync::mpsc::{self, Receiver};
     use client::{Client, ConnectionStatus};
     use super::Broker;
@@ -543,5 +545,22 @@ mod test {
 
         let subscribed_clients = broker.get_subscribed_clients(s1).unwrap();
         assert_eq!(ConnectionStatus::Disconnected, subscribed_clients[0].status());
+    }
+
+    #[test]
+    fn new_clients_state_after_reconnections() {
+        let connect = Connect {
+            protocol:  Protocol::new("MQTT", 4).unwrap(),
+            keep_alive: 100,
+            client_id: "session-test".to_owned(),
+            clean_session: false,
+            last_will: None,
+            username: None,
+            password: None,
+        };
+
+        let broker = Broker::new();
+        let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 80456); 
+        let client = broker.handle_connect(Box::new(connect), addr).unwrap();
     }
 }
