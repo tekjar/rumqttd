@@ -27,7 +27,21 @@ quick_error! {
             cause(err)
             display("timer error: {}", err)
         }
-        InvalidMqttPacket
+        NoClient {
+            description("No client with this ID")
+        }
+        ClientIdExists {
+            description("Client with that ID already exists")
+        }
+        InvalidMqttPacket {
+            description("Invalid Mqtt Packet")
+        }
+        InvalidClientId {
+            description("Invalid Client ID")
+        }
+        DisconnectRequest {
+            description("Received Disconnect Request")
+        }
         Other
     }
 }

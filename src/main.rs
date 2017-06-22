@@ -21,13 +21,15 @@ pub mod error;
 pub mod codec;
 pub mod broker;
 pub mod client;
-pub mod subscription;
+pub mod subscription_list;
+pub mod client_list;
 pub mod conf;
 
 use std::fs::File;
 use std::io::{self, Read};
 use std::io::ErrorKind;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::error::Error as StdError;
 
 use mqtt3::*;
 use tokio_core::reactor::{Core, Interval};
@@ -36,11 +38,9 @@ use tokio_io::AsyncRead;
 
 use futures::stream::Stream;
 use futures::Future;
-use futures::sync::mpsc;
 
 use slog::{Logger, Drain};
 
-use client::Client;
 use broker::Broker;
 use codec::MqttCodec;
 use error::Error;
@@ -71,9 +71,11 @@ fn main() {
 
     let connections = listener.incoming().for_each(|(socket, addr)| {
         let framed = socket.framed(MqttCodec::new());
-        info!(logger, "🌟   new connection from {}", addr);
+        info!(logger, "☄️   new tcp connection from {}", addr);
         let broker_inner = broker_inner.clone();
         let error_logger = broker_inner.logger.clone();
+        let error_logger1 = broker_inner.logger.clone();
+
         let handshake = framed.into_future()
                                   .map_err(move |(err, _)| {
                                       error!(error_logger, "pre handshake error = {:?}", err);
@@ -82,16 +84,15 @@ fn main() {
                                   .and_then(move |(packet,framed)| { // only accepted connections from here
 
                 let broker = broker_inner.clone();
+
                 if let Some(Packet::Connect(c)) = packet {
-                    // TODO: Do connect packet validation here
-                    let (tx, rx) = mpsc::channel::<Packet>(100);
-
-                    let mut client = Client::new(&c.client_id, addr, tx.clone());
-                    client.set_keep_alive(c.keep_alive);
-
-                    broker.add_client(client.clone());
-
-                    Ok((framed, client, rx))
+                    match broker.handle_connect(c, addr) {
+                        Ok((client, rx)) => {
+                            info!(error_logger1, "✨   mqtt connection successful. id = {:?}", client.id);
+                            Ok((framed, client, rx))
+                        }
+                        Err(e) => Err(io::Error::new(io::ErrorKind::Other, e.description())),
+                    }
                 } else {
                     Err(io::Error::new(io::ErrorKind::Other, "Invalid Handshake Packet"))
                 }
@@ -113,9 +114,13 @@ fn main() {
                             .map(move |handshake| {
             let broker_handshake = broker_inner.clone();
             
-            // handle each connections n/w send and recv here
+            // handle each connections n/w send and recv here.
+            // each connection will have one event loop handler and lot of aliased
+            // clients with shared state that can communicate with this eventloop handler
             if let Some((framed, client, rx)) = handshake {
-                let id = client.id.clone();
+                let id: String = client.id.clone();
+                let uid = client.uid;
+                let clean_session = client.clean_session;
                 let keep_alive = client.keep_alive;
                 let client_timer = client.clone();
 
@@ -170,22 +175,27 @@ fn main() {
                 let rx_future = timer_future.select(rx_future);
 
                 let error_logger = broker_handshake.logger.clone();
+                let error_logger1 = broker_handshake.logger.clone();
                 // current connections outgoing n/w packets
                 let tx_future = rx.map_err(|_| Error::Other)
-                                  .map(|r| match r {
-                                           Packet::Publish(p) => Packet::Publish(p),
-                                           Packet::Connack(c) => Packet::Connack(c),
-                                           Packet::Suback(sa) => Packet::Suback(sa),
-                                           Packet::Puback(pa) => Packet::Puback(pa),
-                                           Packet::Pubrec(prec) => Packet::Pubrec(prec),
-                                           Packet::Pubrel(prel) => Packet::Pubrel(prel),
-                                           Packet::Pubcomp(pc) => Packet::Pubcomp(pc),
-                                           Packet::Pingresp => Packet::Pingresp,
-                                           _ => panic!("Outgoing Misc: {:?}", r),
+                                  .and_then(move |r| match r {
+                                           Packet::Publish(p) => Ok(Packet::Publish(p)),
+                                           Packet::Connack(c) => Ok(Packet::Connack(c)),
+                                           Packet::Suback(sa) => Ok(Packet::Suback(sa)),
+                                           Packet::Puback(pa) => Ok(Packet::Puback(pa)),
+                                           Packet::Pubrec(prec) => Ok(Packet::Pubrec(prec)),
+                                           Packet::Pubrel(prel) => Ok(Packet::Pubrel(prel)),
+                                           Packet::Pubcomp(pc) => Ok(Packet::Pubcomp(pc)),
+                                           Packet::Pingresp => Ok(Packet::Pingresp),
+                                           Packet::Disconnect => Err(Error::DisconnectRequest),
+                                           _ => {
+                                               error!(error_logger1, "improper packet {:?} received. disconnecting", r);
+                                               Err(Error::InvalidMqttPacket)
+                                           }
                                        })
                                   .forward(sender)
                                   .map_err(move |e| {
-                                      error!(error_logger, "network transmission error = {:?}", e);
+                                      error!(error_logger, "transmission error = {:?}", e);
                                       Ok::<_, ()>(())
                                   })
                                   .then(move |_| {
@@ -199,7 +209,7 @@ fn main() {
                 let connection = rx_future.select(tx_future);
                 let c = connection.then(move |_| {
                                             error!(broker_inner.logger, "disconnecting client: {:?}", id);
-                                            let _ = broker_inner.remove_client(&id);
+                                            let _ = broker_inner.handle_disconnect(&id, uid, clean_session);
                                             Ok::<_, ()>(())
                                         });
 
