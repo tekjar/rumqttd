@@ -12,7 +12,7 @@ high performance tokio based rust mqtt broker
 
 - [X] config file
 - [X] topic wild cards
-- [ ] distinguish clean session & persistent session
+- [X] distinguish clean session & persistent session
 - [ ] last will
 - [ ] retained message
 - [ ] username password authentication
