@@ -11,9 +11,6 @@ use futures::{Future, Sink};
 
 use mqtt3::*;
 
-use slog::{Logger, Drain};
-use slog_term;
-
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum ConnectionStatus {
     Connected,
@@ -84,7 +81,6 @@ pub struct Client {
     pub keep_alive: Option<Duration>,
     pub clean_session: bool,
     pub state: Rc<RefCell<ClientState>>,
-    logger: Logger,
 }
 
 impl Debug for Client {
@@ -96,7 +92,6 @@ impl Debug for Client {
 impl Client {
     pub fn new(id: &str, addr: SocketAddr, tx: Sender<Packet>) -> Client {
         let state = ClientState::new();
-        let logger = rumqttd_logger(id);
 
         Client {
             addr: addr,
@@ -105,7 +100,6 @@ impl Client {
             tx: tx,
             keep_alive: None,
             clean_session: true,
-            logger: logger,
             state: Rc::new(RefCell::new(state)),
         }
     }
@@ -197,7 +191,7 @@ impl Client {
                                   .position(|x| x.pid == Some(pkid)) {
             state.outgoing_pub.remove(index)
         } else {
-            error!(self.logger, "Unsolicited PUBLISH packet: {:?}", pkid);
+            error!("Unsolicited PUBLISH packet: {:?}", pkid);
             None
         }
     }
@@ -215,7 +209,7 @@ impl Client {
                                   .position(|x| x.pid == Some(pkid)) {
             state.outgoing_rec.remove(index)
         } else {
-            error!(self.logger, "Unsolicited RECORD packet: {:?}", pkid);
+            error!("Unsolicited RECORD packet: {:?}", pkid);
             None
         }
     }
@@ -231,7 +225,7 @@ impl Client {
         if let Some(index) = state.outgoing_rel.iter().position(|x| *x == pkid) {
             state.outgoing_rel.remove(index)
         } else {
-            error!(self.logger, "Unsolicited RELEASE packet: {:?}", pkid);
+            error!("Unsolicited RELEASE packet: {:?}", pkid);
             None
         }
     }
@@ -247,7 +241,7 @@ impl Client {
         if let Some(index) = state.outgoing_comp.iter().position(|x| *x == pkid) {
             state.outgoing_comp.remove(index)
         } else {
-            error!(self.logger, "Unsolicited COMPLETE packet: {:?}", pkid);
+            error!("Unsolicited COMPLETE packet: {:?}", pkid);
             None
         }
     }
@@ -419,13 +413,4 @@ mod test {
             }
         }
     }
-}
-
-fn rumqttd_logger(client_id: &str) -> Logger {
-    use std::sync::Mutex;
-
-    let decorator = slog_term::TermDecorator::new().build();
-    let drain = slog_term::FullFormat::new(decorator).build().fuse();
-    let drain = Mutex::new(drain).fuse();
-    Logger::root(drain, o!("client-id" => client_id.to_owned()))
 }

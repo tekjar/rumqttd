@@ -10,10 +10,10 @@ extern crate serde;
 extern crate serde_derive;
 #[macro_use]
 extern crate lazy_static;
-
 #[macro_use]
-extern crate slog;
-extern crate slog_term;
+extern crate log;
+extern crate simplelog;
+extern crate chrono;
 #[macro_use]
 extern crate quick_error;
 
@@ -37,7 +37,7 @@ use tokio_io::AsyncRead;
 use futures::stream::Stream;
 use futures::Future;
 
-use slog::{Logger, Drain};
+use simplelog::{Config, TermLogger, WriteLogger, CombinedLogger, LogLevelFilter};
 
 use broker::Broker;
 use codec::MqttCodec;
@@ -46,37 +46,43 @@ use error::Error;
 lazy_static! {
     pub static ref CONF: conf::Rumqttd = {
         let mut conf = String::new();
-        let _ = File::open("conf/rumqttd.conf").unwrap().read_to_string(&mut conf);
+        let _ = File::open("conf/rumqttd.conf").expect("Config Error").read_to_string(&mut conf);
         toml::from_str::<conf::Rumqttd>(&conf).unwrap()
     };
 }
 
 fn main() {
+    CombinedLogger::init(
+        vec![
+            TermLogger::new(LogLevelFilter::Info, Config::default()).unwrap(),
+            WriteLogger::new(LogLevelFilter::Info, 
+                             Config::default(), 
+                             File::create("/tmp/rumqttd.log").unwrap()),
+        ]
+    ).unwrap();
+    
+    
     let mut core = Core::new().unwrap();
     let handle = core.handle();
 
     let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), CONF.connection.port);
-    let logger = rumqttd_logger();
-
-    info!(logger, "🌩️   starting broker");
+    info!("🌩️   starting broker");
 
     let listener = TcpListener::bind(&address, &core.handle()).unwrap();
 
     let broker = Broker::new();
     let broker_inner = broker.clone();
     let handle_inner = handle.clone();
-    info!(logger, "👂🏼   listening for connections");
+    info!("👂🏼   listening for connections");
 
     let connections = listener.incoming().for_each(|(socket, addr)| {
         let framed = socket.framed(MqttCodec::new());
-        info!(logger, "☄️   new tcp connection from {}", addr);
+        info!("☄️   new tcp connection from {}", addr);
         let broker_inner = broker_inner.clone();
-        let error_logger = broker_inner.logger.clone();
-        let error_logger1 = broker_inner.logger.clone();
 
         let handshake = framed.into_future()
                                   .map_err(move |(err, _)| {
-                                      error!(error_logger, "pre handshake error = {:?}", err);
+                                      error!("pre handshake error = {:?}", err);
                                       err
                                   }) // for accept errors, get error and discard the stream
                                   .and_then(move |(packet,framed)| { // only accepted connections from here
@@ -86,7 +92,7 @@ fn main() {
                 if let Some(Packet::Connect(c)) = packet {
                     match broker.handle_connect(c, addr) {
                         Ok((client, rx)) => {
-                            info!(error_logger1, "✨   mqtt connection successful. id = {:?}", client.id);
+                            info!("✨   mqtt connection successful. id = {:?}", client.id);
                             Ok((framed, client, rx))
                         }
                         Err(e) => Err(io::Error::new(io::ErrorKind::Other, e.description())),
@@ -103,10 +109,9 @@ fn main() {
 
         let broker_inner = broker.clone();
         let handle_inner = handle_inner.clone();
-        let logger = logger.clone();
         let mqtt = handshake.map(|w| Some(w))
                             .or_else(move |e| {
-                                         error!(logger, "{:?}", e);
+                                         error!("{:?}", e);
                                          Ok::<_, ()>(None)
                                      })
                             .map(move |handshake| {
@@ -133,7 +138,6 @@ fn main() {
                 let broker_inner = broker_handshake.clone();
                 let handle_inner = handle_inner.clone();
 
-                let error_logger = broker_handshake.logger.clone();
                 // current connections incoming n/w packets
                 let rx_future = receiver.or_else(|e| Err::<_, error::Error>(e.into()))
                                         .for_each(move |msg| {
@@ -150,13 +154,12 @@ fn main() {
                         _ => Err(error::Error::InvalidMqttPacket),
                     }
                 }).map_err(move |e| {
-                    error!(error_logger, "network incoming handle error = {:?}", e);
+                    error!("network incoming handle error = {:?}", e);
                     Ok::<_, ()>(())
                 })
                 .then(move |_| Ok::<_, ()>(()));
 
                 let interval = Interval::new(keep_alive.unwrap(), &handle_inner).unwrap();
-                let error_logger = broker_handshake.logger.clone();
                 let timer_future = interval.for_each(move |_| {
                                 if client_timer.has_exceeded_keep_alive() {
                                     Err(io::Error::new(ErrorKind::Other, "Ping Timer Error"))
@@ -165,15 +168,13 @@ fn main() {
                                 }
                             })
                             .map_err(move |e| {
-                                      error!(error_logger, "ping timer error = {:?}", e);
+                                      error!("ping timer error = {:?}", e);
                                       Ok::<_, ()>(())
                             })
                             .then(|_| Ok(()));
 
                 let rx_future = timer_future.select(rx_future);
 
-                let error_logger = broker_handshake.logger.clone();
-                let error_logger1 = broker_handshake.logger.clone();
                 // current connections outgoing n/w packets
                 let tx_future = rx.map_err(|_| Error::Other)
                                   .and_then(move |r| match r {
@@ -187,13 +188,13 @@ fn main() {
                                            Packet::Pingresp => Ok(Packet::Pingresp),
                                            Packet::Disconnect => Err(Error::DisconnectRequest),
                                            _ => {
-                                               error!(error_logger1, "improper packet {:?} received. disconnecting", r);
+                                               error!("improper packet {:?} received. disconnecting", r);
                                                Err(Error::InvalidMqttPacket)
                                            }
                                        })
                                   .forward(sender)
                                   .map_err(move |e| {
-                                      error!(error_logger, "transmission error = {:?}", e);
+                                      error!("transmission error = {:?}", e);
                                       Ok::<_, ()>(())
                                   })
                                   .then(move |_| {
@@ -206,7 +207,7 @@ fn main() {
                 let broker_inner = broker_handshake.clone();
                 let connection = rx_future.select(tx_future);
                 let c = connection.then(move |_| {
-                                            error!(broker_inner.logger, "disconnecting client: {:?}", id);
+                                            error!("disconnecting client: {:?}", id);
                                             let _ = broker_inner.handle_disconnect(&id, uid, clean_session);
                                             Ok::<_, ()>(())
                                         });
@@ -222,13 +223,4 @@ fn main() {
 
     //TODO: why isn't this working for 'listener.incoming().for_each'
     core.run(connections).unwrap();
-}
-
-fn rumqttd_logger() -> Logger {
-    use std::sync::Mutex;
-
-    let decorator = slog_term::TermDecorator::new().build();
-    let drain = slog_term::FullFormat::new(decorator).build().fuse();
-    let drain = Mutex::new(drain).fuse();
-    Logger::root(drain, o!("rumqttd" => env!("CARGO_PKG_VERSION")))
 }

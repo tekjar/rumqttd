@@ -5,6 +5,9 @@ authors = ["tekjar <k.teza1@gmail.com>"]
 
 [dependencies]
 toml = "0.4"
+log = "0.3"
+simplelog = "0.4"
+chrono = "0.4"
 lazy_static = "0.2"
 serde_derive = "1"
 serde = "1"
@@ -14,8 +17,5 @@ tokio-io = "0.1"
 tokio-core = "0.1"
 tokio-timer = "0.1"
 quick-error = "1.1"
-slog = "2"
-slog-term = "2"
-slog-async = "2"
 # mqtt3 = { git = "https://github.com/tekjar/mqtt3" }
 mqtt3 = {path = "../mqtt3"}

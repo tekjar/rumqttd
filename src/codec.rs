@@ -4,18 +4,12 @@ use bytes::BytesMut;
 use tokio_io::codec::{Encoder, Decoder};
 
 use mqtt3::{self, Packet, MqttWrite, MqttRead};
-use slog::{Logger, Drain};
-use slog_term;
 
-pub struct MqttCodec {
-    logger: Logger,
-}
+pub struct MqttCodec;
 
 impl MqttCodec {
     pub fn new() -> Self {
-        MqttCodec {
-            logger: codec_logger(),
-        }
+        MqttCodec
     }
 }
 
@@ -43,12 +37,12 @@ impl Decoder for MqttCodec {
                             ErrorKind::TimedOut | ErrorKind::WouldBlock => return Ok(None),
                             ErrorKind::UnexpectedEof => return Ok(None),
                             _ => {
-                                error!(self.logger, "mqtt3 io error = {:?}", e);
+                                error!("mqtt3 io error = {:?}", e);
                                 return Err(io::Error::new(e.kind(), e.description()))
                             },
                         }
                     } else {
-                        error!(self.logger, "mqtt3 read error = {:?}", e);
+                        error!("mqtt3 read error = {:?}", e);
                         return Err(io::Error::new(ErrorKind::Other, e.description()));
                     }
                 }
@@ -88,13 +82,4 @@ impl Encoder for MqttCodec {
 
         Ok(())
     }
-}
-
-fn codec_logger() -> Logger {
-    use std::sync::Mutex;
-
-    let decorator = slog_term::TermDecorator::new().build();
-    let drain = slog_term::FullFormat::new(decorator).build().fuse();
-    let drain = Mutex::new(drain).fuse();
-    Logger::root(drain, o!("codec" => env!("CARGO_PKG_VERSION")))
 }

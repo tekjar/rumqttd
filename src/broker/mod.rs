@@ -9,9 +9,6 @@ use std::net::SocketAddr;
 
 use futures::sync::mpsc::{self, Receiver};
 
-use slog::{Logger, Drain};
-use slog_term;
-
 use mqtt3::*;
 use error::{Result, Error};
 
@@ -49,19 +46,15 @@ pub struct Broker {
     /// Subscriptions mapped to interested clients
     subscriptions: Rc<RefCell<SubscriptionList>>,
     state: Rc<RefCell<BrokerState>>,
-    pub logger: Logger,
 }
 
 impl Broker {
     pub fn new() -> Self {
         let state = BrokerState::new();
-        let logger = rumqttd_logger();
-
         Broker {
             clients: Rc::new(RefCell::new(ClientList::new())),
             subscriptions: Rc::new(RefCell::new(SubscriptionList::new())),
             state: Rc::new(RefCell::new(state)),
-            logger: logger,
         }
     }
 
@@ -200,7 +193,7 @@ impl Broker {
     pub fn handle_connect(&self, connect: Box<Connect>, addr: SocketAddr) -> Result<(Client, Receiver<Packet>)> {
         // TODO: Do connect packet validation here
         if connect.client_id.is_empty() || connect.client_id.chars().next() == Some(' ') {
-            error!(self.logger, "Client shouldn't be empty or start with space");
+            error!("Client shouldn't be empty or start with space");
             return Err(Error::InvalidClientId)
         }
 
@@ -301,8 +294,7 @@ impl Broker {
                     // we should fwd only qos1 packets to all the subscribers (any qos) at this point
                     self.forward_to_subscribers(publish)?;
                 } else {
-                    error!(self.logger,
-                           "Ignoring publish packet. No pkid for QoS1 packet");
+                    error!("Ignoring publish packet. No pkid for QoS1 packet");
                 }
             }
             // save the qos2 packet and send pubrec
@@ -312,8 +304,7 @@ impl Broker {
                     let packet = Packet::Pubrec(pkid);
                     client.send(packet);
                 } else {
-                    error!(self.logger,
-                           "Ignoring record packet. No pkid for QoS2 packet");
+                    error!("Ignoring record packet. No pkid for QoS2 packet");
                 }
             }
         };
@@ -327,7 +318,7 @@ impl Broker {
     }
 
     pub fn handle_pubrec(&self, pkid: PacketIdentifier, client: &Client) -> Result<()> {
-        debug!(self.logger, "PubRec <= {:?}", pkid);
+        debug!("PubRec <= {:?}", pkid);
 
         // remove record packet from state queues
         if let Some(record) = client.remove_record(pkid) {
@@ -384,7 +375,7 @@ impl Broker {
     }
 
     pub fn handle_pingreq(&self, client: &Client) -> Result<()> {
-        debug!(self.logger, "PingReq <= {:?}",  client.id);
+        debug!("PingReq <= {:?}",  client.id);
         let pingresp = Packet::Pingresp;
         client.send(pingresp);
         Ok(())
@@ -399,15 +390,6 @@ impl Debug for Broker {
                self.subscriptions.borrow(),
                self.state.borrow())
     }
-}
-
-fn rumqttd_logger() -> Logger {
-    use std::sync::Mutex;
-
-    let decorator = slog_term::TermDecorator::new().build();
-    let drain = slog_term::FullFormat::new(decorator).build().fuse();
-    let drain = Mutex::new(drain).fuse();
-    Logger::root(drain, o!("module" => "broker"))
 }
 
 #[cfg(test)]
