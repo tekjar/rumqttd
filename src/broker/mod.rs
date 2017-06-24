@@ -1,3 +1,6 @@
+pub mod subscription_list;
+pub mod client_list;
+
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::collections::{VecDeque};
@@ -13,8 +16,8 @@ use mqtt3::*;
 use error::{Result, Error};
 
 use client::{ConnectionStatus, Client};
-use subscription_list::SubscriptionList;
-use client_list::ClientList;
+use self::subscription_list::SubscriptionList;
+use self::client_list::ClientList;
 
 #[derive(Debug)]
 pub struct BrokerState {
@@ -45,7 +48,7 @@ pub struct Broker {
     clients: Rc<RefCell<ClientList>>,
     /// Subscriptions mapped to interested clients
     subscriptions: Rc<RefCell<SubscriptionList>>,
-    pub state: Rc<RefCell<BrokerState>>,
+    state: Rc<RefCell<BrokerState>>,
     pub logger: Logger,
 }
 
