@@ -7,6 +7,6 @@ utlis/benchmark/benchmark
 # More information here http://doc.crates.io/guide.html#cargotoml-vs-cargolock
 Cargo.lock
 target
-/src/*.bk
+*.bk
 utlis/node_modules
 .vscode
