@@ -68,6 +68,7 @@ impl ClientState {
     }
 }
 
+// TODO: Maybe keeping immutable non state variable in Arc will help with clones & memory ?
 
 // a shared state client. same client will be cloned across subscriptions &
 // clients in the broker. except for the tx handle, all other immutables are
@@ -80,6 +81,7 @@ pub struct Client {
     pub tx: Sender<Packet>,
     pub keep_alive: Option<Duration>,
     pub clean_session: bool,
+    pub last_will: Option<LastWill>,
     pub state: Rc<RefCell<ClientState>>,
 }
 
@@ -100,6 +102,7 @@ impl Client {
             tx: tx,
             keep_alive: None,
             clean_session: true,
+            last_will: None,
             state: Rc::new(RefCell::new(state)),
         }
     }
@@ -119,8 +122,30 @@ impl Client {
         self.clean_session = false;
     }
 
+    pub fn set_lastwill(&mut self, will: LastWill) {
+        self.last_will = Some(will);
+    }
+
     pub fn set_uid(&mut self, uid: u8) {
         self.uid = uid;
+    }
+
+    pub fn lastwill_publish(&self) -> Option<Publish> {
+        if let Some(ref last_will) = self.last_will {
+            Some(
+                Publish {
+                    dup: false,
+                    qos: last_will.qos,
+                    retain: last_will.retain,
+                    topic_name: last_will.topic.clone(),
+                    pid: None,
+                    // TODO: Optimize the clone here
+                    payload: Arc::new(last_will.message.clone().into_bytes())
+                }
+            )
+        } else {
+            None
+        }
     }
 
     pub fn next_pkid(&self) -> PacketIdentifier {

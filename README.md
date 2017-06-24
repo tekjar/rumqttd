@@ -13,12 +13,12 @@ high performance tokio based rust mqtt broker
 - [X] config file
 - [X] topic wild cards
 - [X] distinguish clean session & persistent session
-- [ ] last will
+- [X] last will
 - [ ] retained message
 - [ ] username password authentication
 - [ ] tls
 - [ ] shared subscription
-- [ ] graphana based dashboard plugin
+- [ ] grafana (or something similar) based dashboard plugin
 - [ ] clustering
 
 # benchmarks

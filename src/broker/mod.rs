@@ -204,6 +204,10 @@ impl Broker {
             client.set_persisent_session();
         }
 
+        if let Some(last_will) = connect.last_will {
+            client.set_lastwill(last_will);
+        }
+
         let client = self.add_client(client)?;
 
         Ok((client, rx))
@@ -221,6 +225,11 @@ impl Broker {
             clients.set_status(id, uid, ConnectionStatus::Disconnected).unwrap();
             if clean_session {
                 let _ = clients.clear(id, uid);
+            }
+
+            // forward lastwill message to all the subscribers
+            if let Some(publish) = clients.get_lastwill_publish(id) {
+                let _ = self.forward_to_subscribers(Box::new(publish));
             }
         }
         

@@ -1,7 +1,7 @@
 use std::collections::{HashMap};
 use std::mem;
 
-use mqtt3::{Packet, PacketIdentifier};
+use mqtt3::{Packet, PacketIdentifier, Publish};
 
 use client::{Client, ConnectionStatus};
 use error::{Result, Error};
@@ -138,6 +138,13 @@ impl ClientList {
     pub fn get_uid(&self, id: &str) -> Option<u8> {
         if let Some(client) = self.list.get(id) {
             return Some(client.uid)
+        }
+        None
+    }
+
+    pub fn get_lastwill_publish(&self, id: &str) -> Option<Publish> {
+        if let Some(client) = self.list.get(id) {
+            return client.lastwill_publish()
         }
         None
     }
