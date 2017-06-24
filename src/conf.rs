@@ -1,6 +1,5 @@
 #[derive(Debug, Deserialize)]
 pub struct Rumqttd {
-    pub version: String,
     pub connection: Connection,
     pub log: Log,
     pub security: Security,

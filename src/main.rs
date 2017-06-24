@@ -16,6 +16,10 @@ extern crate simplelog;
 extern crate chrono;
 #[macro_use]
 extern crate quick_error;
+extern crate structopt;
+#[macro_use]
+extern crate structopt_derive;
+
 
 pub mod error;
 pub mod codec;
@@ -29,6 +33,7 @@ use std::io::ErrorKind;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::error::Error as StdError;
 
+use structopt::StructOpt;
 use mqtt3::*;
 use tokio_core::reactor::{Core, Interval};
 use tokio_core::net::TcpListener;
@@ -43,10 +48,20 @@ use broker::Broker;
 use codec::MqttCodec;
 use error::Error;
 
+#[derive(StructOpt, Debug)]
+#[structopt(name = "Rumqttd", about = "High performance asynchronous mqtt broker")]
+pub struct CommandLine {
+    #[structopt(short = "c", help = "Rumqttd config file", default_value = "/etc/rumqttd.conf")]
+    config_path: String,
+}
+
+
 lazy_static! {
     pub static ref CONF: conf::Rumqttd = {
+        let cl = CommandLine::from_args();
+
         let mut conf = String::new();
-        let _ = File::open("conf/rumqttd.conf").expect("Config Error").read_to_string(&mut conf);
+        let _ = File::open(cl.config_path).expect("Config Error").read_to_string(&mut conf);
         toml::from_str::<conf::Rumqttd>(&conf).unwrap()
     };
 }

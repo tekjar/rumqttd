@@ -6,6 +6,8 @@ authors = ["tekjar <k.teza1@gmail.com>"]
 [dependencies]
 toml = "0.4"
 log = "0.3"
+structopt = "0.0.5"
+structopt-derive = "0.0.5"
 simplelog = "0.4"
 chrono = "0.4"
 lazy_static = "0.2"
