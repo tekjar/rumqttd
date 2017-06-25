@@ -275,6 +275,37 @@ impl Client {
         let _ = self.tx.clone().send(packet).wait();
     }
 
+    pub fn publish(&self, topic: &str, qos: QoS, payload: Arc<Vec<u8>>, dup: bool, retain: bool) {
+        let pkid = if qos == QoS::AtMostOnce {
+            None
+        } else {
+            Some(self.next_pkid())
+        };
+
+        let message = Publish {
+                                dup: dup,
+                                qos: qos,
+                                retain: retain,
+                                pid: pkid,
+                                topic_name: topic.to_owned(),
+                                payload: payload,
+                              };
+        let message = Box::new(message);
+        let packet = Packet::Publish(message.clone());
+
+        match qos {
+            QoS::AtLeastOnce => self.store_publish(message),
+            QoS::ExactlyOnce => self.store_record(message),
+            _ => (),
+        }
+
+        // forward to eventloop only when client status is Connected
+        match self.status() {
+            ConnectionStatus::Connected => self.send(packet),
+            _ => (),
+        }
+    }
+
     pub fn send_all_backlogs(&self) {
         let mut state = self.state.borrow_mut();
 

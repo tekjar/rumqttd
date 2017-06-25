@@ -153,6 +153,8 @@ fn main() {
                 let broker_inner = broker_handshake.clone();
                 let handle_inner = handle_inner.clone();
 
+                // TODO: move handle methods to client
+
                 // current connections incoming n/w packets
                 let rx_future = receiver.or_else(|e| Err::<_, error::Error>(e.into()))
                                         .for_each(move |msg| {

@@ -3,7 +3,7 @@ pub mod client_list;
 
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::collections::{VecDeque};
+use std::collections::{VecDeque, HashMap};
 use std::fmt::{self, Debug};
 use std::net::SocketAddr;
 
@@ -26,6 +26,8 @@ pub struct BrokerState {
     pub incoming_rel: VecDeque<PacketIdentifier>,
     /// For QoS 2. Stores incoming comp
     pub incoming_comp: VecDeque<PacketIdentifier>,
+    /// Retained Publishes
+    pub retains: HashMap<String, Box<Publish>>,
 }
 
 impl BrokerState {
@@ -35,6 +37,7 @@ impl BrokerState {
             incoming_rec: VecDeque::new(),
             incoming_rel: VecDeque::new(),
             incoming_comp: VecDeque::new(),
+            retains: HashMap::new(),
         }
     }
 }
@@ -190,6 +193,20 @@ impl Broker {
         };
     }
 
+    pub fn store_retain(&self, publish: Box<Publish>) {
+        let mut state = self.state.borrow_mut();
+        state.retains.insert(publish.topic_name.clone(), publish);
+    }
+
+    pub fn get_retain(&self, topic: &str) -> Option<Publish> {
+        let state = self.state.borrow_mut();
+        if let Some(publish) = state.retains.get(topic) {
+            Some(*publish.clone())
+        } else {
+            None
+        }
+    }
+
     pub fn handle_connect(&self, connect: Box<Connect>, addr: SocketAddr) -> Result<(Client, Receiver<Packet>)> {
         // TODO: Do connect packet validation here
         if connect.client_id.is_empty() || connect.client_id.chars().next() == Some(' ') {
@@ -245,7 +262,7 @@ impl Broker {
         let mut return_codes = Vec::new();
 
         // Add current client's id to this subscribe topic
-        for topic in subscribe.topics {
+        for topic in subscribe.topics.clone() {
             self.add_subscription_client(topic.clone(), client.clone())?;
             return_codes.push(SubscribeReturnCodes::Success(topic.qos));
         }
@@ -253,6 +270,14 @@ impl Broker {
         let suback = client.suback_packet(pkid, return_codes);
         let packet = Packet::Suback(suback);
         client.send(packet);
+
+        // publish retained messages to the new client's subscriptions
+        for topic in subscribe.topics {
+            if let Some(publish) = self.get_retain(&topic.topic_path) {
+                client.publish(&publish.topic_name, topic.qos, publish.payload, false, publish.retain)
+            }
+        }
+
         Ok(())
     }
 
@@ -289,12 +314,20 @@ impl Broker {
         Ok(())
     }
 
-    pub fn handle_publish(&self, publish: Box<Publish>, client: &Client) -> Result<()> {
+    pub fn handle_publish(&self, mut publish: Box<Publish>, client: &Client) -> Result<()> {
         let pkid = publish.pid;
         let qos = publish.qos;
+        let retain = publish.retain;
+
+        if retain {
+            self.store_retain(publish.clone());
+            publish.retain = false;
+        }
 
         match qos {
-            QoS::AtMostOnce => self.forward_to_subscribers(publish)?,
+            QoS::AtMostOnce => {
+                self.forward_to_subscribers(publish)?
+            }
             // send puback for qos1 packet immediately
             QoS::AtLeastOnce => {
                 if let Some(pkid) = pkid {
