@@ -161,13 +161,16 @@ fn main() {
                     let broker = broker_inner.clone();
                     client.reset_last_control_at();
                     match msg {
-                        Packet::Publish(p) => broker.handle_publish(p, &client),
+                        Packet::Publish(p) => {
+                            client.handle_publish(p.clone());
+                            broker.handle_publish(p)
+                        }
                         Packet::Subscribe(s) => broker.handle_subscribe(s, &client),
-                        Packet::Puback(pkid) => broker.handle_puback(pkid, &client),
-                        Packet::Pubrec(pkid) => broker.handle_pubrec(pkid, &client),
+                        Packet::Puback(pkid) => client.handle_puback(pkid),
+                        Packet::Pubrec(pkid) => client.handle_pubrec(pkid),
                         Packet::Pubrel(pkid) => broker.handle_pubrel(pkid, &client),
-                        Packet::Pubcomp(pkid) => broker.handle_pubcomp(pkid, &client),
-                        Packet::Pingreq => broker.handle_pingreq(&client),
+                        Packet::Pubcomp(pkid) => client.handle_pubcomp(pkid),
+                        Packet::Pingreq => client.handle_pingreq(),
                         _ => Err(error::Error::InvalidMqttPacket),
                     }
                 }).map_err(move |e| {

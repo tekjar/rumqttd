@@ -240,7 +240,7 @@ impl Broker {
         Ok(())
     }
 
-    pub fn handle_publish(&self, mut publish: Box<Publish>, client: &Client) -> Result<()> {
+    pub fn handle_publish(&self, mut publish: Box<Publish>) -> Result<()> {
         let pkid = publish.pid;
         let qos = publish.qos;
         let retain = publish.retain;
@@ -251,56 +251,19 @@ impl Broker {
         }
 
         match qos {
-            QoS::AtMostOnce => {
-                self.forward_to_subscribers(publish)?
-            }
+            QoS::AtMostOnce => self.forward_to_subscribers(publish)?,
             // send puback for qos1 packet immediately
             QoS::AtLeastOnce => {
                 if let Some(pkid) = pkid {
-                    let packet = Packet::Puback(pkid);
-                    client.send(packet);
                     // we should fwd only qos1 packets to all the subscribers (any qos) at this point
                     self.forward_to_subscribers(publish)?;
                 } else {
                     error!("Ignoring publish packet. No pkid for QoS1 packet");
                 }
             }
-            // save the qos2 packet and send pubrec
-            QoS::ExactlyOnce => {
-                if let Some(pkid) = pkid {
-                    client.store_outgoing_record(publish.clone());
-                    let packet = Packet::Pubrec(pkid);
-                    client.send(packet);
-                } else {
-                    error!("Ignoring record packet. No pkid for QoS2 packet");
-                }
-            }
+            QoS::ExactlyOnce => (),
         };
 
-        Ok(())
-    }
-
-    pub fn handle_puback(&self, pkid: PacketIdentifier, client: &Client) -> Result<()> {
-        client.remove_outgoing_publish(pkid);
-        Ok(())
-    }
-
-    pub fn handle_pubrec(&self, pkid: PacketIdentifier, client: &Client) -> Result<()> {
-        debug!("PubRec <= {:?}", pkid);
-
-        // remove record packet from state queues
-        if let Some(record) = client.remove_outgoing_record(pkid) {
-            // record and send pubrel packet
-            client.store_outgoing_rel(record.pid.unwrap()); //TODO: Remove unwrap. Might be a problem if client behaves incorrectly
-            let packet = Packet::Pubrel(pkid);
-            client.send(packet);
-        }
-        Ok(())
-    }
-
-    pub fn handle_pubcomp(&self, pkid: PacketIdentifier, client: &Client) -> Result<()> {
-        // remove release packet from state queues
-        client.remove_outgoing_rel(pkid);
         Ok(())
     }
 
@@ -339,13 +302,6 @@ impl Broker {
             }
         }
 
-        Ok(())
-    }
-
-    pub fn handle_pingreq(&self, client: &Client) -> Result<()> {
-        debug!("PingReq <= {:?}",  client.id);
-        let pingresp = Packet::Pingresp;
-        client.send(pingresp);
         Ok(())
     }
 }

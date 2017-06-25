@@ -11,6 +11,8 @@ use futures::{Future, Sink};
 
 use mqtt3::*;
 
+use error::Result;
+
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum ConnectionStatus {
     Connected,
@@ -430,6 +432,68 @@ impl Client {
                      payload: payload.clone(),
                  })
 
+    }
+
+    pub fn handle_publish(&self, mut publish: Box<Publish>) -> Result<()> {
+        let pkid = publish.pid;
+        let qos = publish.qos;
+        let retain = publish.retain;
+
+        match qos {
+            QoS::AtMostOnce => (),
+            // send puback for qos1 packet immediately
+            QoS::AtLeastOnce => {
+                if let Some(pkid) = pkid {
+                    let packet = Packet::Puback(pkid);
+                    self.send(packet);
+                } else {
+                    error!("Ignoring publish packet. No pkid for QoS1 packet");
+                }
+            }
+            // save the qos2 packet and send pubrec
+            QoS::ExactlyOnce => {
+                if let Some(pkid) = pkid {
+                    self.store_outgoing_record(publish.clone());
+                    let packet = Packet::Pubrec(pkid);
+                    self.send(packet);
+                } else {
+                    error!("Ignoring record packet. No pkid for QoS2 packet");
+                }
+            }
+        };
+
+        Ok(())
+    }
+
+    pub fn handle_puback(&self, pkid: PacketIdentifier) -> Result<()> {
+        self.remove_outgoing_publish(pkid);
+        Ok(())
+    }
+
+    pub fn handle_pubrec(&self, pkid: PacketIdentifier) -> Result<()> {
+        debug!("PubRec <= {:?}", pkid);
+
+        // remove record packet from state queues
+        if let Some(record) = self.remove_outgoing_record(pkid) {
+            // record and send pubrel packet
+            self.store_outgoing_rel(record.pid.unwrap()); //TODO: Remove unwrap. Might be a problem if client behaves incorrectly
+            let packet = Packet::Pubrel(pkid);
+            self.send(packet);
+        }
+        Ok(())
+    }
+
+    pub fn handle_pubcomp(&self, pkid: PacketIdentifier) -> Result<()> {
+        // remove release packet from state queues
+        self.remove_outgoing_rel(pkid);
+        Ok(())
+    }
+
+    pub fn handle_pingreq(&self) -> Result<()> {
+        debug!("PingReq <= {:?}",  self.id);
+        let pingresp = Packet::Pingresp;
+        self.send(pingresp);
+        Ok(())
     }
 
     pub fn queues(&self) {
