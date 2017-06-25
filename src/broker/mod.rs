@@ -18,14 +18,6 @@ use self::client_list::ClientList;
 
 #[derive(Debug)]
 pub struct BrokerState {
-    /// For QoS 1. Stores incoming publishes
-    pub incoming_pub: VecDeque<Box<Publish>>,
-    /// For QoS 2. Stores incoming publishes
-    pub incoming_rec: VecDeque<Box<Publish>>,
-    /// For QoS 2. Stores incoming release
-    pub incoming_rel: VecDeque<PacketIdentifier>,
-    /// For QoS 2. Stores incoming comp
-    pub incoming_comp: VecDeque<PacketIdentifier>,
     /// Retained Publishes
     pub retains: HashMap<String, Box<Publish>>,
 }
@@ -33,10 +25,6 @@ pub struct BrokerState {
 impl BrokerState {
     fn new() -> Self {
         BrokerState {
-            incoming_pub: VecDeque::new(),
-            incoming_rec: VecDeque::new(),
-            incoming_rel: VecDeque::new(),
-            incoming_comp: VecDeque::new(),
             retains: HashMap::new(),
         }
     }
@@ -129,68 +117,6 @@ impl Broker {
         self.clients.borrow_mut().remove_client(id, uid)?;
         let mut subscriptions = self.subscriptions.borrow_mut();
         subscriptions.remove_client(id, uid)
-    }
-
-    // TODO: Find out if broker should drop message if a new massage with existing
-    // pkid is received
-    pub fn store_publish(&self, publish: Box<Publish>) {
-        let mut state = self.state.borrow_mut();
-        state.incoming_pub.push_back(publish.clone());
-    }
-
-    pub fn remove_publish(&self, pkid: PacketIdentifier) -> Option<Box<Publish>> {
-        let mut state = self.state.borrow_mut();
-
-        match state.incoming_pub
-                   .iter()
-                   .position(|x| x.pid == Some(pkid)) {
-            Some(i) => state.incoming_pub.remove(i),
-            None => None,
-        }
-    }
-
-    pub fn store_record(&self, publish: Box<Publish>) {
-        let mut state = self.state.borrow_mut();
-        state.incoming_rec.push_back(publish.clone());
-    }
-
-    pub fn remove_record(&self, pkid: PacketIdentifier) -> Option<Box<Publish>> {
-        let mut state = self.state.borrow_mut();
-
-        match state.incoming_pub
-                   .iter()
-                   .position(|x| x.pid == Some(pkid)) {
-            Some(i) => state.incoming_rec.remove(i),
-            None => None,
-        }
-    }
-
-    pub fn store_rel(&self, pkid: PacketIdentifier) {
-        let mut state = self.state.borrow_mut();
-        state.incoming_rel.push_back(pkid);
-    }
-
-    pub fn remove_rel(&self, pkid: PacketIdentifier) {
-        let mut state = self.state.borrow_mut();
-
-        match state.incoming_rel.iter().position(|x| *x == pkid) {
-            Some(i) => state.incoming_rel.remove(i),
-            None => None,
-        };
-    }
-
-    pub fn store_comp(&self, pkid: PacketIdentifier) {
-        let mut state = self.state.borrow_mut();
-        state.incoming_comp.push_back(pkid);
-    }
-
-    pub fn remove_comp(&self, pkid: PacketIdentifier) {
-        let mut state = self.state.borrow_mut();
-
-        match state.incoming_comp.iter().position(|x| *x == pkid) {
-            Some(i) => state.incoming_comp.remove(i),
-            None => None,
-        };
     }
 
     pub fn store_retain(&self, publish: Box<Publish>) {
@@ -299,8 +225,8 @@ impl Broker {
                 let packet = Packet::Publish(publish.clone());
 
                 match *qos {
-                    QoS::AtLeastOnce => client.store_publish(publish),
-                    QoS::ExactlyOnce => client.store_record(publish),
+                    QoS::AtLeastOnce => client.store_outgoing_publish(publish),
+                    QoS::ExactlyOnce => client.store_outgoing_record(publish),
                     _ => (),
                 }
 
@@ -342,7 +268,7 @@ impl Broker {
             // save the qos2 packet and send pubrec
             QoS::ExactlyOnce => {
                 if let Some(pkid) = pkid {
-                    self.store_record(publish.clone());
+                    client.store_outgoing_record(publish.clone());
                     let packet = Packet::Pubrec(pkid);
                     client.send(packet);
                 } else {
@@ -355,7 +281,7 @@ impl Broker {
     }
 
     pub fn handle_puback(&self, pkid: PacketIdentifier, client: &Client) -> Result<()> {
-        client.remove_publish(pkid);
+        client.remove_outgoing_publish(pkid);
         Ok(())
     }
 
@@ -363,9 +289,9 @@ impl Broker {
         debug!("PubRec <= {:?}", pkid);
 
         // remove record packet from state queues
-        if let Some(record) = client.remove_record(pkid) {
+        if let Some(record) = client.remove_outgoing_record(pkid) {
             // record and send pubrel packet
-            client.store_rel(record.pid.unwrap()); //TODO: Remove unwrap. Might be a problem if client behaves incorrectly
+            client.store_outgoing_rel(record.pid.unwrap()); //TODO: Remove unwrap. Might be a problem if client behaves incorrectly
             let packet = Packet::Pubrel(pkid);
             client.send(packet);
         }
@@ -374,7 +300,7 @@ impl Broker {
 
     pub fn handle_pubcomp(&self, pkid: PacketIdentifier, client: &Client) -> Result<()> {
         // remove release packet from state queues
-        client.remove_rel(pkid);
+        client.remove_outgoing_rel(pkid);
         Ok(())
     }
 
@@ -385,7 +311,7 @@ impl Broker {
         let packet = Packet::Pubcomp(pkid);
         client.send(packet);
 
-        if let Some(record) = client.remove_record(pkid) {
+        if let Some(record) = client.remove_outgoing_record(pkid) {
             let topic = record.topic_name.clone();
             let payload = record.payload;
 
@@ -403,8 +329,8 @@ impl Broker {
                     let packet = Packet::Publish(publish.clone());
 
                     match *qos {
-                        QoS::AtLeastOnce => client.store_publish(publish),
-                        QoS::ExactlyOnce => client.store_record(publish),
+                        QoS::AtLeastOnce => client.store_outgoing_publish(publish),
+                        QoS::ExactlyOnce => client.store_outgoing_record(publish),
                         _ => (),
                     }
 
@@ -528,28 +454,7 @@ mod test {
         }
     }
 
-    #[test]
-    fn store_and_remove_from_broker_state_queues_using_aliases() {
-        let broker = Broker::new();
-        let broker_alias = broker.clone();
 
-        let (pkid1, pkid2, pkid3) = (PacketIdentifier(1), PacketIdentifier(2), PacketIdentifier(3));
-
-        broker.store_rel(pkid1);
-        broker.store_rel(pkid2);
-        broker.store_rel(pkid3);
-
-        broker_alias.remove_rel(pkid2);
-
-        {
-            let state = broker.state.borrow_mut();
-            let mut it = state.incoming_rel.iter();
-
-            assert_eq!(pkid1, *it.next().unwrap());
-            assert_eq!(pkid3, *it.next().unwrap());
-            assert_eq!(None, it.next());
-        }
-    }
 
     #[test]
     fn change_connection_status_of_clients_and_verify_status_in_subscriptions() {
