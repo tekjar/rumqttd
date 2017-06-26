@@ -161,13 +161,26 @@ fn main() {
                     let broker = broker_inner.clone();
                     client.reset_last_control_at();
                     match msg {
-                        Packet::Publish(p) => broker.handle_publish(p, &client),
-                        Packet::Subscribe(s) => broker.handle_subscribe(s, &client),
-                        Packet::Puback(pkid) => broker.handle_puback(pkid, &client),
-                        Packet::Pubrec(pkid) => broker.handle_pubrec(pkid, &client),
-                        Packet::Pubrel(pkid) => broker.handle_pubrel(pkid, &client),
-                        Packet::Pubcomp(pkid) => broker.handle_pubcomp(pkid, &client),
-                        Packet::Pingreq => broker.handle_pingreq(&client),
+                        Packet::Publish(p) => {
+                            // sends acks
+                            client.handle_publish(p.clone())?;
+                            // forward to subscribers
+                            broker.handle_publish(p)
+                        }
+                        Packet::Subscribe(s) => {
+                            let successful_subscriptions = client.handle_subscribe(s)?;
+                            broker.handle_subscribe(successful_subscriptions, &client)
+                        }
+                        Packet::Puback(pkid) => client.handle_puback(pkid),
+                        Packet::Pubrec(pkid) => client.handle_pubrec(pkid),
+                        Packet::Pubrel(pkid) => {
+                            // send comp and get the record from queue
+                            let record = client.handle_pubrel(pkid)?;
+                            // send the record to subscribed clients
+                            broker.handle_pubrel(record)
+                        }
+                        Packet::Pubcomp(pkid) => client.handle_pubcomp(pkid),
+                        Packet::Pingreq => client.handle_pingreq(),
                         _ => Err(error::Error::InvalidMqttPacket),
                     }
                 }).map_err(move |e| {

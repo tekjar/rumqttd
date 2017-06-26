@@ -14,7 +14,7 @@ high performance tokio based rust mqtt broker
 - [X] topic wild cards
 - [X] distinguish clean session & persistent session
 - [X] last will
-- [X] retained message
+- [X] retained messages
 - [ ] username password authentication
 - [ ] tls
 - [ ] shared subscription
