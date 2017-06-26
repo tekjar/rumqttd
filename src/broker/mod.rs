@@ -3,7 +3,7 @@ pub mod client_list;
 
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::collections::{VecDeque, HashMap};
+use std::collections::HashMap;
 use std::fmt::{self, Debug};
 use std::net::SocketAddr;
 
@@ -183,23 +183,12 @@ impl Broker {
         Ok(())
     }
 
-    pub fn handle_subscribe(&self, subscribe: Box<Subscribe>, client: &Client) -> Result<()> {
-        let pkid = subscribe.pid;
-        let mut return_codes = Vec::new();
-
-        // Add current client's id to this subscribe topic
-        for topic in subscribe.topics.clone() {
+    pub fn handle_subscribe(&self, topics: Vec<SubscribeTopic>, client: &Client) -> Result<()> {
+        // Add current client's id to this subscribe topic & publish retains
+        for topic in topics {
             self.add_subscription_client(topic.clone(), client.clone())?;
-            return_codes.push(SubscribeReturnCodes::Success(topic.qos));
-        }
-
-        let suback = client.suback_packet(pkid, return_codes);
-        let packet = Packet::Suback(suback);
-        client.send(packet);
-
-        // publish retained messages to the new client's subscriptions
-        for topic in subscribe.topics {
             if let Some(publish) = self.get_retain(&topic.topic_path) {
+                // TODO: Should we publish with publish qos or topic qos ??
                 client.publish(&publish.topic_name, topic.qos, publish.payload, false, publish.retain)
             }
         }
@@ -254,7 +243,7 @@ impl Broker {
             QoS::AtMostOnce => self.forward_to_subscribers(publish)?,
             // send puback for qos1 packet immediately
             QoS::AtLeastOnce => {
-                if let Some(pkid) = pkid {
+                if pkid.is_some() {
                     // we should fwd only qos1 packets to all the subscribers (any qos) at this point
                     self.forward_to_subscribers(publish)?;
                 } else {
@@ -267,38 +256,27 @@ impl Broker {
         Ok(())
     }
 
-    pub fn handle_pubrel(&self, pkid: PacketIdentifier, client: &Client) -> Result<()> {
+    pub fn handle_pubrel(&self, record: Box<Publish>) -> Result<()> {
         // client is asking to release all the recorded packets
+        let topic = record.topic_name.clone();
+        let payload = record.payload;
 
-        // send pubcomp packet to the client first
-        let packet = Packet::Pubcomp(pkid);
-        client.send(packet);
-
-        if let Some(record) = client.remove_outgoing_record(pkid) {
-            let topic = record.topic_name.clone();
-            let payload = record.payload;
-
-            // publish to all the subscribers in different qos `SubscribeTopic`
-            // hash keys
-            for qos in [QoS::AtMostOnce, QoS::AtLeastOnce, QoS::ExactlyOnce].iter() {
-
-                let subscribe_topic = SubscribeTopic {
-                    topic_path: topic.clone(),
-                    qos: qos.clone(),
-                };
-
-                for client in self.get_subscribed_clients(subscribe_topic)? {
-                    let publish = client.publish_packet(&topic, qos.clone(), payload.clone(), false, false);
-                    let packet = Packet::Publish(publish.clone());
-
-                    match *qos {
-                        QoS::AtLeastOnce => client.store_outgoing_publish(publish),
-                        QoS::ExactlyOnce => client.store_outgoing_record(publish),
-                        _ => (),
-                    }
-
-                    client.send(packet);
+        // publish to all the subscribers in different qos `SubscribeTopic`
+        // hash keys
+        for qos in [QoS::AtMostOnce, QoS::AtLeastOnce, QoS::ExactlyOnce].iter() {
+            let subscribe_topic = SubscribeTopic {
+                topic_path: topic.clone(),
+                qos: qos.clone(),
+            };
+            for client in self.get_subscribed_clients(subscribe_topic)? {
+                let publish = client.publish_packet(&topic, qos.clone(), payload.clone(), false, false);
+                let packet = Packet::Publish(publish.clone());
+                match *qos {
+                    QoS::AtLeastOnce => client.store_outgoing_publish(publish),
+                    QoS::ExactlyOnce => client.store_outgoing_record(publish),
+                    _ => (),
                 }
+                client.send(packet);
             }
         }
 

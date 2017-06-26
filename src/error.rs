@@ -42,6 +42,9 @@ quick_error! {
         DisconnectRequest {
             description("Received Disconnect Request")
         }
+        NotInQueue {
+            description("Couldn't find requested message in the queue")
+        }
         Other
     }
 }

@@ -162,13 +162,23 @@ fn main() {
                     client.reset_last_control_at();
                     match msg {
                         Packet::Publish(p) => {
-                            client.handle_publish(p.clone());
+                            // sends acks
+                            client.handle_publish(p.clone())?;
+                            // forward to subscribers
                             broker.handle_publish(p)
                         }
-                        Packet::Subscribe(s) => broker.handle_subscribe(s, &client),
+                        Packet::Subscribe(s) => {
+                            let successful_subscriptions = client.handle_subscribe(s)?;
+                            broker.handle_subscribe(successful_subscriptions, &client)
+                        }
                         Packet::Puback(pkid) => client.handle_puback(pkid),
                         Packet::Pubrec(pkid) => client.handle_pubrec(pkid),
-                        Packet::Pubrel(pkid) => broker.handle_pubrel(pkid, &client),
+                        Packet::Pubrel(pkid) => {
+                            // send comp and get the record from queue
+                            let record = client.handle_pubrel(pkid)?;
+                            // send the record to subscribed clients
+                            broker.handle_pubrel(record)
+                        }
                         Packet::Pubcomp(pkid) => client.handle_pubcomp(pkid),
                         Packet::Pingreq => client.handle_pingreq(),
                         _ => Err(error::Error::InvalidMqttPacket),

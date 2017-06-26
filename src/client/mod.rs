@@ -11,7 +11,7 @@ use futures::{Future, Sink};
 
 use mqtt3::*;
 
-use error::Result;
+use error::{Result, Error};
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum ConnectionStatus {
@@ -434,10 +434,26 @@ impl Client {
 
     }
 
-    pub fn handle_publish(&self, mut publish: Box<Publish>) -> Result<()> {
+    pub fn handle_subscribe(&self, subscribe: Box<Subscribe>) -> Result<Vec<SubscribeTopic>> {
+        let pkid = subscribe.pid;
+        let mut return_codes = Vec::new();
+        let mut successful_subscriptions = Vec::new();
+        // Add current client's id to this subscribe topic
+        for topic in subscribe.topics.clone() {
+            return_codes.push(SubscribeReturnCodes::Success(topic.qos));
+            successful_subscriptions.push(topic);
+        }
+
+        let suback = self.suback_packet(pkid, return_codes);
+        let packet = Packet::Suback(suback);
+        self.send(packet);
+
+        Ok(successful_subscriptions)
+    }
+
+    pub fn handle_publish(&self, publish: Box<Publish>) -> Result<()> {
         let pkid = publish.pid;
         let qos = publish.qos;
-        let retain = publish.retain;
 
         match qos {
             QoS::AtMostOnce => (),
@@ -480,7 +496,21 @@ impl Client {
             let packet = Packet::Pubrel(pkid);
             self.send(packet);
         }
+
         Ok(())
+    }
+
+    pub fn handle_pubrel(&self, pkid: PacketIdentifier) -> Result<Box<Publish>> {
+        // send pubcomp packet to the client first
+        let packet = Packet::Pubcomp(pkid);
+        self.send(packet);
+
+        if let Some(record) = self.remove_outgoing_record(pkid) {
+            Ok(record.clone())
+        } else {
+            error!("Couldn't release the message as it's not available in outgoing recored queue");
+            Err(Error::NotInQueue)
+        }
     }
 
     pub fn handle_pubcomp(&self, pkid: PacketIdentifier) -> Result<()> {
