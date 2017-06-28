@@ -19,7 +19,7 @@ use self::client_list::ClientList;
 #[derive(Debug)]
 pub struct BrokerState {
     /// Retained Publishes
-    pub retains: HashMap<String, Box<Publish>>,
+    pub retains: HashMap<SubscribeTopic, Box<Publish>>,
 }
 
 impl BrokerState {
@@ -121,15 +121,45 @@ impl Broker {
 
     pub fn store_retain(&self, publish: Box<Publish>) {
         let mut state = self.state.borrow_mut();
-        state.retains.insert(publish.topic_name.clone(), publish);
+        let retain_subscription = SubscribeTopic {
+            topic_path: publish.topic_name.clone(),
+            qos: publish.qos,
+        };
+        if publish.payload.len() == 0 {
+            // remove existing retains if new retain publish's payload len = 0
+            let _ = state.retains.remove(&retain_subscription);
+        } else {
+            state.retains.insert(retain_subscription, publish);
+        }
     }
 
-    pub fn get_retain(&self, topic: &str) -> Option<Publish> {
+    pub fn get_retain(&self, topic: &SubscribeTopic) -> Option<Vec<Box<Publish>>> {
+        // TODO: Remove unwrap
+        let topic_path = TopicPath::from_str(topic.topic_path.clone()).unwrap();
         let state = self.state.borrow_mut();
-        if let Some(publish) = state.retains.get(topic) {
-            Some(*publish.clone())
+        let mut publishes = vec![];
+
+        // if new subscription contains wildcards
+        if topic_path.wildcards {
+            for (subscription, publish) in state.retains.iter() {
+                let concrete_topic = TopicPath::from_str(subscription.topic_path.clone()).unwrap();
+                let qos = subscription.qos;
+
+                // NOTE: new wildcard subscribes are expecting just topic match
+                //       with paho test suite
+                if topic_path.is_match(&concrete_topic) {
+                    publishes.push(publish.clone())
+                }
+            }
+            // println!("{:?}", publishes);
+            Some(publishes)
         } else {
-            None
+            if let Some(publish) = state.retains.get(topic) {
+                publishes.push(publish.clone());
+                Some(publishes)
+            } else {
+                None
+            }
         }
     }
 
@@ -187,9 +217,14 @@ impl Broker {
         // Add current client's id to this subscribe topic & publish retains
         for topic in topics {
             self.add_subscription_client(topic.clone(), client.clone())?;
-            if let Some(publish) = self.get_retain(&topic.topic_path) {
-                // TODO: Should we publish with publish qos or topic qos ??
-                client.publish(&publish.topic_name, topic.qos, publish.payload, false, publish.retain)
+            if let Some(mut publishes) = self.get_retain(&topic) {
+                let len = publishes.len();
+                for _ in 0..len {
+                    // TODO: Use vecdeque instead
+                    let p = publishes.remove(0);
+                    // TODO: Should we publish with publish qos or topic qos ??
+                    client.publish(&p.topic_name.clone(), topic.qos, p.payload, false, true)
+                }
             }
         }
 

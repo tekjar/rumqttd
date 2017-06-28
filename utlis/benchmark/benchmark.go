@@ -38,7 +38,7 @@ var counter uint64
 var start = time.Now()
 var end = time.Now()
 
-const totalPublishes = 10000
+const totalPublishes = 1000000
 
 func main() {
 	exit := make(chan bool, totalPublishes)
