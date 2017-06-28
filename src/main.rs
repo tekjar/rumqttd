@@ -181,11 +181,20 @@ fn main() {
                         }
                         Packet::Pubcomp(pkid) => client.handle_pubcomp(pkid),
                         Packet::Pingreq => client.handle_pingreq(),
+                        Packet::Disconnect => Err(error::Error::DisconnectPacket),
                         _ => Err(error::Error::InvalidMqttPacket),
                     }
                 }).map_err(move |e| {
-                    error!("network incoming handle error = {:?}", e);
-                    Ok::<_, ()>(())
+                    match e {
+                        error::Error::DisconnectPacket => {
+                            error!("received disconnect packet. error = {:?}", e);
+                            Err(())
+                        }
+                        _ => {
+                            error!("network incoming handle error = {:?}", e);
+                            Ok::<_, ()>(())
+                        }
+                    }
                 })
                 .then(move |_| Ok::<_, ()>(()));
 

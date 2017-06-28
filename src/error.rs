@@ -45,6 +45,9 @@ quick_error! {
         NotInQueue {
             description("Couldn't find requested message in the queue")
         }
+        DisconnectPacket {
+            description("Received disconnect packet from client")
+        }
         Other
     }
 }
