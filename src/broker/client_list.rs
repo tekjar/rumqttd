@@ -49,6 +49,7 @@ impl ClientList {
             let _ = mem::replace(&mut c.tx, client.tx);
             let _ = mem::replace(&mut c.keep_alive, client.keep_alive);
             let _ = mem::replace(&mut c.clean_session, client.clean_session);
+            let _ = mem::replace(&mut c.last_will, client.last_will);
             return Ok(c.clone())
         }
         Err(Error::NoClient)

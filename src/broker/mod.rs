@@ -75,6 +75,7 @@ impl Broker {
             // before replacing
             if client.clean_session {
                 clients.clear(&client.id, client.uid).unwrap();
+                subscriptions.remove_client(&client.id, client.uid).unwrap();
             }
 
             // change the unique id of the new client

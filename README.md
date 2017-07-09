@@ -1,20 +1,17 @@
 # rumqttd
-high performance tokio based rust mqtt broker
+High performance tokio based rust mqtt broker
 
 # features
 
 * MQTT 3.1.1
 * QoS 0, 1, 2 Publishes & Subscribes
-
-
+* Persistent Sessions
+* Last Will
+* Retained Messages
+* Passes paho interoperability test suite
 
 # todo
 
-- [X] config file
-- [X] topic wild cards
-- [X] distinguish clean session & persistent session
-- [X] last will
-- [X] retained messages
 - [ ] username password authentication
 - [ ] tls
 - [ ] shared subscription
