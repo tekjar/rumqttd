@@ -106,9 +106,9 @@ fn main() {
 
                 if let Some(Packet::Connect(c)) = packet {
                     match broker.handle_connect(c, addr) {
-                        Ok((client, rx)) => {
+                        Ok((client, connack, rx)) => {
                             info!("✨   mqtt connection successful. id = {:?}", client.id);
-                            Ok((framed, client, rx))
+                            Ok((framed, client, rx, connack))
                         }
                         Err(e) => Err(io::Error::new(io::ErrorKind::Other, e.description())),
                     }
@@ -135,7 +135,7 @@ fn main() {
             // handle each connections n/w send and recv here.
             // each connection will have one event loop handler and lot of aliased
             // clients with shared state that can communicate with this eventloop handler
-            if let Some((framed, client, rx)) = handshake {
+            if let Some((framed, client, rx, connack)) = handshake {
                 let id: String = client.id.clone();
                 let uid = client.uid;
                 let clean_session = client.clean_session;
@@ -144,19 +144,22 @@ fn main() {
 
                 let (sender, receiver) = framed.split();
 
-                let connack = Packet::Connack(Connack {
-                                                  session_present: false,
-                                                  code: ConnectReturnCode::Accepted,
-                                              });
+                let connack = Packet::Connack(connack);
 
                 let _ = client.send(connack);
+                // send backlogs only after sending connack
+                client.send_all_backlogs();
+
                 let broker_inner = broker_handshake.clone();
                 let handle_inner = handle_inner.clone();
 
                 // TODO: move handle methods to client
 
                 // current connections incoming n/w packets
-                let rx_future = receiver.or_else(|e| Err::<_, error::Error>(e.into()))
+                let rx_future = receiver.or_else(|e| {
+                                            error!("Receiver error = {:?}", e);
+                                            Err::<_, error::Error>(e.into())
+                                        })
                                         .for_each(move |msg| {
                     let broker = broker_inner.clone();
                     client.reset_last_control_at();
@@ -196,7 +199,9 @@ fn main() {
                         }
                     }
                 })
-                .then(move |_| Ok::<_, ()>(()));
+                .then(move |e| {
+                    Ok::<_, ()>(())
+                });
 
                 let interval = Interval::new(keep_alive.unwrap(), &handle_inner).unwrap();
                 let timer_future = interval.for_each(move |_| {
@@ -215,7 +220,10 @@ fn main() {
                 let rx_future = timer_future.select(rx_future);
 
                 // current connections outgoing n/w packets
-                let tx_future = rx.map_err(|_| Error::Other)
+                let tx_future = rx.map_err(|e| {
+                                    error!("Channel error = {:?}", e);
+                                    Error::Other
+                                  })
                                   .and_then(move |r| match r {
                                            Packet::Publish(p) => Ok(Packet::Publish(p)),
                                            Packet::Connack(c) => Ok(Packet::Connack(c)),

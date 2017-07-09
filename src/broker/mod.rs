@@ -59,14 +59,18 @@ impl Broker {
         clients.get_uid(id)
     }
 
-    /// Adds a new client to the broker
-    pub fn add_client(&self, mut client: Client) -> Result<Client> {
+    /// Adds a new client to the broker & return the client along with
+    /// session present status
+    pub fn add_client(&self, mut client: Client) -> Result<(Client, bool)> {
         let mut clients = self.clients.borrow_mut();
-        let id = client.id.clone();
+        let mut subscriptions = self.subscriptions.borrow_mut();
 
+        let id = client.id.clone();
+        let mut session_exists = false;
         // there is already a client existing with this id, 
         // send disconnect request this client's handle & replace this client
         if let Some(uid) = clients.has_client(&id) {
+            session_exists = true;
             // if clean session is set for new client, clean the old client's state
             // before replacing
             if client.clean_session {
@@ -83,13 +87,13 @@ impl Broker {
 
             // replace old client not state members to new new client's members
             let client = clients.replace_client(client).unwrap();
-            client.send_all_backlogs();
+            let _ = subscriptions.replace_client(client.clone());
 
             // return replaced client which has old 'state' information
-            Ok(client)
+            Ok((client, session_exists))
         } else {
             clients.add_client(client.clone()).unwrap();
-            Ok(client)
+            Ok((client, session_exists))
         }
     }
 
@@ -143,7 +147,7 @@ impl Broker {
         if topic_path.wildcards {
             for (subscription, publish) in state.retains.iter() {
                 let concrete_topic = TopicPath::from_str(subscription.topic_path.clone()).unwrap();
-                let qos = subscription.qos;
+                // let qos = subscription.qos;
 
                 // NOTE: new wildcard subscribes are expecting just topic match
                 //       with paho test suite
@@ -163,7 +167,7 @@ impl Broker {
         }
     }
 
-    pub fn handle_connect(&self, connect: Box<Connect>, addr: SocketAddr) -> Result<(Client, Receiver<Packet>)> {
+    pub fn handle_connect(&self, connect: Box<Connect>, addr: SocketAddr) -> Result<(Client, Connack, Receiver<Packet>)> {
         // TODO: Do connect packet validation here
         if connect.client_id.is_empty() || connect.client_id.chars().next() == Some(' ') {
             error!("Client shouldn't be empty or start with space");
@@ -172,6 +176,8 @@ impl Broker {
 
         let (tx, rx) = mpsc::channel::<Packet>(100);
         let mut client = Client::new(&connect.client_id, addr, tx);
+        let clean_session = connect.clean_session;
+
         client.set_keep_alive(connect.keep_alive);
         if !connect.clean_session {
             client.set_persisent_session();
@@ -181,9 +187,21 @@ impl Broker {
             client.set_lastwill(last_will);
         }
 
-        let client = self.add_client(client)?;
+        let (client, session_exists) = self.add_client(client)?;
 
-        Ok((client, rx))
+        let connack = if clean_session {
+            Connack {
+                session_present: false,
+                code: ConnectReturnCode::Accepted,
+            }
+        } else {
+            Connack {
+                session_present: session_exists,
+                code: ConnectReturnCode::Accepted,
+            }
+        };
+
+        Ok((client, connack, rx))
     }
 
     // clears the session state in case of clean session
