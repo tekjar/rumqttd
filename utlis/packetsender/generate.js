@@ -27,8 +27,8 @@ var publish = {
   messageId: 100,
   qos: 1,
   dup: false,
-  topic: 'hello/world',
-  payload: new Buffer('hello world'),
+  topic: 'hello',
+  payload: new Buffer('z'.repeat(120)),
   retain: false
 }
 
@@ -82,7 +82,7 @@ var disconnect = {
   cmd: 'disconnect'
 }
 
-// console.log('suback: ',  mqtt.generate(suback))
+// console.log('publish: ',  mqtt.generate(publish))
 
 var client = new net.Socket();
 
@@ -95,6 +95,9 @@ client.connect(1883, '127.0.0.1', function () {
         break;
       case 'connect':
         client.write(mqtt.generate(connect));
+        break;
+      case 'publish':
+        client.write(mqtt.generate(publish));
         break;
       case 'puback':
         client.write(mqtt.generate(puback));

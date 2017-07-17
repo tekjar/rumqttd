@@ -58,6 +58,7 @@ impl Decoder for MqttCodec {
             return Ok(None);
         }
 
+        // println!("buf = {:?}", buf);
         // println!("{:?}, {:?}, {:?}", len, packet, buf.len());
 
         buf.split_to(len);

@@ -19,5 +19,5 @@ tokio-io = "0.1"
 tokio-core = "0.1"
 tokio-timer = "0.1"
 quick-error = "1.1"
-# mqtt3 = { git = "https://github.com/tekjar/mqtt3" }
-mqtt3 = {path = "../mqtt3"}
+mqtt3 = { git = "https://github.com/tekjar/mqtt3" }
+#mqtt3 = {path = "../mqtt3"}
