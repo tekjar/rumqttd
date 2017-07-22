@@ -3,6 +3,7 @@
 /target/
 utlis/benchmark/benchmark
 utils/bigpublish/bigpublish
+utils/connections/connections
 /node_modules
 target
 *.bk
