@@ -32,6 +32,8 @@ use std::io::{self, Read};
 use std::io::ErrorKind;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::error::Error as StdError;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 use structopt::StructOpt;
 use mqtt3::*;
@@ -75,8 +77,8 @@ fn main() {
                              File::create("/tmp/rumqttd.log").unwrap()),
         ]
     ).unwrap();
-    
-    
+
+
     let mut core = Core::new().unwrap();
     let handle = core.handle();
 
@@ -85,15 +87,17 @@ fn main() {
 
     let listener = TcpListener::bind(&address, &core.handle()).unwrap();
 
-    let broker = Broker::new();
-    let broker_inner = broker.clone();
+    let broker_root = Rc::new(RefCell::new(Broker::new()));
+    let broker_connections = broker_root.clone();
     let handle_inner = handle.clone();
+
     info!("👂🏼   listening for connections");
 
     let connections = listener.incoming().for_each(|(socket, addr)| {
         let framed = socket.framed(MqttCodec::new());
         info!("☄️   new tcp connection from {}", addr);
-        let broker_inner = broker_inner.clone();
+        let broker_handshake = broker_connections.clone();
+        let broker_disconnect = broker_connections.clone();
 
         let handshake = framed.into_future()
                                   .map_err(move |(err, _)| {
@@ -102,7 +106,7 @@ fn main() {
                                   }) // for accept errors, get error and discard the stream
                                   .and_then(move |(packet,framed)| { // only accepted connections from here
 
-                let broker = broker_inner.clone();
+                let mut broker = broker_handshake.borrow_mut();
 
                 if let Some(Packet::Connect(c)) = packet {
                     match broker.handle_connect(c, addr) {
@@ -122,7 +126,7 @@ fn main() {
         // let timeout = timeout.then(|_| Err(io::Error::new(io::ErrorKind::Other, "Invalid Handshake Packet")));
         // let handshake = handshake.select(timeout);
 
-        let broker_inner = broker.clone();
+        let broker_mqtt = broker_connections.clone();
         let handle_inner = handle_inner.clone();
         let mqtt = handshake.map(|w| Some(w))
                             .or_else(move |e| {
@@ -130,7 +134,6 @@ fn main() {
                                          Ok::<_, ()>(None)
                                      })
                             .map(move |handshake| {
-            let broker_handshake = broker_inner.clone();
             
             // handle each connections n/w send and recv here.
             // each connection will have one event loop handler and lot of aliased
@@ -150,10 +153,8 @@ fn main() {
                 // send backlogs only after sending connack
                 client.send_all_backlogs();
 
-                let broker_inner = broker_handshake.clone();
+                let broker_rx = broker_mqtt.clone();
                 let handle_inner = handle_inner.clone();
-
-                // TODO: move handle methods to client
 
                 // current connections incoming n/w packets
                 let rx_future = receiver.or_else(|e| {
@@ -161,7 +162,7 @@ fn main() {
                                             Err::<_, error::Error>(e.into())
                                         })
                                         .for_each(move |msg| {
-                    let broker = broker_inner.clone();
+                    let mut broker = broker_rx.borrow_mut();
                     client.reset_last_control_at();
                     match msg {
                         Packet::Publish(p) => {
@@ -199,7 +200,7 @@ fn main() {
                         }
                     }
                 })
-                .then(move |e| {
+                .then(move |_| {
                     Ok::<_, ()>(())
                 });
 
@@ -251,11 +252,11 @@ fn main() {
                 let rx_future = rx_future.then(|_| Ok(()));
 
 
-                let broker_inner = broker_handshake.clone();
                 let connection = rx_future.select(tx_future);
                 let c = connection.then(move |_| {
+                                            let mut broker = broker_disconnect.borrow_mut();
                                             error!("disconnecting client: {:?}", id);
-                                            let _ = broker_inner.handle_disconnect(&id, uid, clean_session);
+                                            let _ = broker.handle_disconnect(&id, uid, clean_session);
                                             Ok::<_, ()>(())
                                         });
 

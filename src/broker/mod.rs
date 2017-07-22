@@ -1,8 +1,6 @@
 pub mod subscription_list;
 pub mod client_list;
 
-use std::cell::RefCell;
-use std::rc::Rc;
 use std::collections::HashMap;
 use std::fmt::{self, Debug};
 use std::net::SocketAddr;
@@ -30,123 +28,111 @@ impl BrokerState {
     }
 }
 
-#[derive(Clone)]
 pub struct Broker {
     /// All the active clients mapped to their IDs
-    clients: Rc<RefCell<ClientList>>,
+    clients: ClientList,
     /// Subscriptions mapped to interested clients
-    subscriptions: Rc<RefCell<SubscriptionList>>,
-    state: Rc<RefCell<BrokerState>>,
+    subscriptions: SubscriptionList,
+    state: BrokerState,
 }
 
 impl Broker {
     pub fn new() -> Self {
-        let state = BrokerState::new();
         Broker {
-            clients: Rc::new(RefCell::new(ClientList::new())),
-            subscriptions: Rc::new(RefCell::new(SubscriptionList::new())),
-            state: Rc::new(RefCell::new(state)),
+            clients: ClientList::new(),
+            subscriptions: SubscriptionList::new(),
+            state: BrokerState::new(),
         }
     }
 
     pub fn has_client(&self, id: &str) -> Option<u8> {
-        let clients = self.clients.borrow();
-        clients.has_client(id)
+        self.clients.has_client(id)
     }
 
     pub fn get_uid(&self, id: &str) -> Option<u8> {
-        let clients = self.clients.borrow();
-        clients.get_uid(id)
+        self.clients.get_uid(id)
     }
 
     /// Adds a new client to the broker & return the client along with
     /// session present status
-    pub fn add_client(&self, mut client: Client) -> Result<(Client, bool)> {
-        let mut clients = self.clients.borrow_mut();
-        let mut subscriptions = self.subscriptions.borrow_mut();
-
+    fn add_client(&mut self, mut client: Client) -> Result<(Client, bool)> {
         let id = client.id.clone();
         let mut session_exists = false;
+
         // there is already a client existing with this id, 
         // send disconnect request this client's handle & replace this client
-        if let Some(uid) = clients.has_client(&id) {
+        if let Some(uid) = self.clients.has_client(&id) {
             session_exists = true;
             // if clean session is set for new client, clean the old client's state
             // before replacing
             if client.clean_session {
-                clients.clear(&client.id, client.uid).unwrap();
-                subscriptions.remove_client(&client.id, client.uid).unwrap();
+                self.clients.clear(&client.id, client.uid).unwrap();
+                self.subscriptions.remove_client(&client.id, client.uid).unwrap();
             }
 
             // change the unique id of the new client
             client.set_uid(uid + 1);
 
             // send disconnect packet if the client is still connected
-            if clients.status(&client.id).unwrap() == ConnectionStatus::Connected {
-                clients.send(&client.id, Packet::Disconnect)?;
+            if self.clients.status(&client.id).unwrap() == ConnectionStatus::Connected {
+                self.clients.send(&client.id, Packet::Disconnect)?;
             }
 
             // replace old client not state members to new new client's members
-            let client = clients.replace_client(client).unwrap();
-            let _ = subscriptions.replace_client(client.clone());
+            let client = self.clients.replace_client(client).unwrap();
+            let _ = self.subscriptions.replace_client(client.clone());
 
             // return replaced client which has old 'state' information
             Ok((client, session_exists))
         } else {
-            clients.add_client(client.clone()).unwrap();
+            self.clients.add_client(client.clone()).unwrap();
             Ok((client, session_exists))
         }
     }
 
     /// Adds client to a subscription. If the subscription doesn't exist,
     /// new subscription is created and the client will be added to it
-    fn add_subscription_client(&self, topic: SubscribeTopic, client: Client) -> Result<()> {
-        let mut subscriptions = self.subscriptions.borrow_mut();
-        subscriptions.add_subscription(topic, client)
+    fn add_subscription_client(&mut self, topic: SubscribeTopic, client: Client) -> Result<()> {
+        self.subscriptions.add_subscription(topic, client)
     }
 
     /// Remove a client from a subscription
-    pub fn remove_subscription_client(&self, topic: SubscribeTopic, id: &str) -> Result<()> {
-        let mut subscriptions = self.subscriptions.borrow_mut();
-        subscriptions.remove_subscription_client(topic, id)
-    }
+    // fn remove_subscription_client(&mut self, topic: SubscribeTopic, id: &str) -> Result<()> {
+    //     self.subscriptions.remove_subscription_client(topic, id)
+    // }
 
     /// Get the list of clients for a given subscription
-    fn get_subscribed_clients(&self, topic: SubscribeTopic) -> Result<Vec<Client>> {
-        let mut subscriptions = self.subscriptions.borrow_mut();
-        subscriptions.get_subscribed_clients(topic)
+    fn get_subscribed_clients(&mut self, topic: SubscribeTopic) -> Result<Vec<Client>> {
+        self.subscriptions.get_subscribed_clients(topic)
     }
 
     // Remove the client from broker (including subscriptions)
-    pub fn remove_client(&self, id: &str, uid: u8) -> Result<()> {
-        self.clients.borrow_mut().remove_client(id, uid)?;
-        let mut subscriptions = self.subscriptions.borrow_mut();
-        subscriptions.remove_client(id, uid)
+    fn remove_client(&mut self, id: &str, uid: u8) -> Result<()> {
+        self.clients.remove_client(id, uid)?;
+        self.subscriptions.remove_client(id, uid)
     }
 
-    pub fn store_retain(&self, publish: Box<Publish>) {
-        let mut state = self.state.borrow_mut();
+    fn store_retain(&mut self, publish: Box<Publish>) {
         let retain_subscription = SubscribeTopic {
             topic_path: publish.topic_name.clone(),
             qos: publish.qos,
         };
         if publish.payload.len() == 0 {
             // remove existing retains if new retain publish's payload len = 0
-            let _ = state.retains.remove(&retain_subscription);
+            let _ = self.state.retains.remove(&retain_subscription);
         } else {
-            state.retains.insert(retain_subscription, publish);
+            self.state.retains.insert(retain_subscription, publish);
         }
     }
 
-    pub fn get_retain(&self, topic: &SubscribeTopic) -> Option<Vec<Box<Publish>>> {
+    fn get_retain(&self, topic: &SubscribeTopic) -> Option<Vec<Box<Publish>>> {
         // TODO: Remove unwrap
         let topic_path = TopicPath::from_str(topic.topic_path.clone()).unwrap();
-        let state = self.state.borrow_mut();
         let mut publishes = vec![];
 
         // if new subscription contains wildcards
         if topic_path.wildcards {
-            for (subscription, publish) in state.retains.iter() {
+            for (subscription, publish) in self.state.retains.iter() {
                 let concrete_topic = TopicPath::from_str(subscription.topic_path.clone()).unwrap();
                 // let qos = subscription.qos;
 
@@ -159,7 +145,7 @@ impl Broker {
             // println!("{:?}", publishes);
             Some(publishes)
         } else {
-            if let Some(publish) = state.retains.get(topic) {
+            if let Some(publish) = self.state.retains.get(topic) {
                 publishes.push(publish.clone());
                 Some(publishes)
             } else {
@@ -168,7 +154,7 @@ impl Broker {
         }
     }
 
-    pub fn handle_connect(&self, connect: Box<Connect>, addr: SocketAddr) -> Result<(Client, Connack, Receiver<Packet>)> {
+    pub fn handle_connect(&mut self, connect: Box<Connect>, addr: SocketAddr) -> Result<(Client, Connack, Receiver<Packet>)> {
         // TODO: Do connect packet validation here
         if connect.client_id.is_empty() || connect.client_id.chars().next() == Some(' ') {
             error!("Client shouldn't be empty or start with space");
@@ -211,16 +197,15 @@ impl Broker {
     // sent to event loop because of new connections just before client 'replace' 
     // happens and removing client based on just ID here might remove the replaced
     // client from queues
-    pub fn handle_disconnect(&self, id: &str, uid: u8, clean_session: bool) -> Result<()> {
+    pub fn handle_disconnect(&mut self, id: &str, uid: u8, clean_session: bool) -> Result<()> {
         {
-            let clients = self.clients.borrow_mut();
-            clients.set_status(id, uid, ConnectionStatus::Disconnected).unwrap();
+            self.clients.set_status(id, uid, ConnectionStatus::Disconnected).unwrap();
             if clean_session {
-                let _ = clients.clear(id, uid);
+                let _ = self.clients.clear(id, uid);
             }
 
             // forward lastwill message to all the subscribers
-            if let Some(publish) = clients.get_lastwill_publish(id) {
+            if let Some(publish) = self.clients.get_lastwill_publish(id) {
                 let _ = self.forward_to_subscribers(Box::new(publish));
             }
         }
@@ -232,12 +217,14 @@ impl Broker {
         Ok(())
     }
 
-    pub fn handle_subscribe(&self, topics: Vec<SubscribeTopic>, client: &Client) -> Result<()> {
+    pub fn handle_subscribe(&mut self, topics: Vec<SubscribeTopic>, client: &Client) -> Result<()> {
         // Add current client's id to this subscribe topic & publish retains
         for topic in topics {
             self.add_subscription_client(topic.clone(), client.clone())?;
+
             if let Some(mut publishes) = self.get_retain(&topic) {
                 let len = publishes.len();
+
                 for _ in 0..len {
                     // TODO: Use vecdeque instead
                     let p = publishes.remove(0);
@@ -250,7 +237,7 @@ impl Broker {
         Ok(())
     }
 
-    fn forward_to_subscribers(&self, publish: Box<Publish>) -> Result<()> {
+    fn forward_to_subscribers(&mut self, publish: Box<Publish>) -> Result<()> {
         let topic = publish.topic_name.clone();
         let payload = publish.payload.clone();
 
@@ -283,7 +270,7 @@ impl Broker {
         Ok(())
     }
 
-    pub fn handle_publish(&self, mut publish: Box<Publish>) -> Result<()> {
+    pub fn handle_publish(&mut self, mut publish: Box<Publish>) -> Result<()> {
         let pkid = publish.pid;
         let qos = publish.qos;
         let retain = publish.retain;
@@ -310,7 +297,7 @@ impl Broker {
         Ok(())
     }
 
-    pub fn handle_pubrel(&self, record: Box<Publish>) -> Result<()> {
+    pub fn handle_pubrel(&mut self, record: Box<Publish>) -> Result<()> {
         // client is asking to release all the recorded packets
         let topic = record.topic_name.clone();
         let payload = record.payload;
@@ -322,9 +309,11 @@ impl Broker {
                 topic_path: topic.clone(),
                 qos: qos.clone(),
             };
+
             for client in self.get_subscribed_clients(subscribe_topic)? {
                 let publish = client.publish_packet(&topic, qos.clone(), payload.clone(), false, false);
                 let packet = Packet::Publish(publish.clone());
+
                 match *qos {
                     QoS::AtLeastOnce => client.store_outgoing_publish(publish),
                     QoS::ExactlyOnce => client.store_outgoing_record(publish),
@@ -342,15 +331,17 @@ impl Debug for Broker {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f,
                "{:#?}\n{:#?}\n{:#?}",
-               self.clients.borrow(),
-               self.subscriptions.borrow(),
-               self.state.borrow())
+               self.clients,
+               self.subscriptions,
+               self.state)
     }
 }
 
 #[cfg(test)]
 mod test {
     use std::net::{SocketAddr, IpAddr, Ipv4Addr};
+    use std::cell::RefCell;
+    use std::rc::Rc;
 
     use futures::sync::mpsc::{self, Receiver};
     use client::{Client, ConnectionStatus};
@@ -374,19 +365,26 @@ mod test {
             qos: QoS::AtMostOnce,
         };
 
-        let broker = Broker::new();
+        let broker = Rc::new(RefCell::new(Broker::new()));
 
-        // add c1 to to s1, s2, s3 & s4
-        broker.add_subscription_client(s1.clone(), c1.clone()).unwrap();
-        broker.add_subscription_client(s1.clone(), c2.clone()).unwrap();
+        {
+            let mut broker = broker.borrow_mut();
+            // add c1 to to s1, s2, s3 & s4
+            broker.add_subscription_client(s1.clone(), c1.clone()).unwrap();
+            broker.add_subscription_client(s1.clone(), c2.clone()).unwrap();
+        }
 
         let broker_alias = broker.clone();
 
-        // remove c1 & c2 from all subscriptions and verify clients
-        broker_alias.remove_client(&c1.id, 0).unwrap();
-        broker_alias.remove_client(&c2.id, 0).unwrap();
+        {
+            let mut broker_alias = broker_alias.borrow_mut();
+            // remove c1 & c2 from all subscriptions and verify clients
+            broker_alias.remove_client(&c1.id, 0).unwrap();
+            broker_alias.remove_client(&c2.id, 0).unwrap();
+        }
 
         for s in [s1].iter() {
+            let mut broker = broker.borrow_mut();
             let clients = broker.get_subscribed_clients(s.clone()).unwrap();
             assert_eq!(clients.len(), 0);
         }
@@ -400,7 +398,7 @@ mod test {
         let (c4, ..) = mock_client("mock-client-1", 0);
         let (c5, ..) = mock_client("mock-client-1", 0);
 
-        let broker = Broker::new();
+        let mut broker = Broker::new();
 
         // replaces previous clients with new uids
         broker.add_client(c1).unwrap();
@@ -424,7 +422,7 @@ mod test {
         let (c4, ..) = mock_client("mock-client-1", 4);
         let (c5, ..) = mock_client("mock-client-1", 5);
 
-        let broker = Broker::new();
+        let mut broker = Broker::new();
 
         broker.add_client(c1).unwrap();
         broker.add_client(c2).unwrap();
@@ -453,7 +451,7 @@ mod test {
             qos: QoS::AtMostOnce,
         };
 
-        let broker = Broker::new();
+        let mut broker = Broker::new();
         assert_eq!(ConnectionStatus::Connected, c1.status());
         broker.add_client(c1.clone()).unwrap();
 
@@ -479,8 +477,8 @@ mod test {
             password: None,
         };
 
-        let broker = Broker::new();
-        let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 80456); 
-        let client = broker.handle_connect(Box::new(connect), addr).unwrap();
+        let mut broker = Broker::new();
+        let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8045);
+        let _ = broker.handle_connect(Box::new(connect), addr).unwrap();
     }
 }
