@@ -26,7 +26,7 @@ impl ClientList {
     }
 
     pub fn add_client(&mut self, client: Client) -> Result<()> {
-        if let Some(_) = self.list.get_mut(&client.id) {
+        if self.list.get_mut(&client.id).is_some() {
             return Err(Error::ClientIdExists)
         }
 

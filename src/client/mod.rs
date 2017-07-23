@@ -210,11 +210,7 @@ impl Client {
         if let Some(keep_alive) = self.keep_alive  {
             let keep_alive = keep_alive.as_secs();
             let keep_alive = Duration::new(f32::ceil(1.5 * keep_alive as f32) as u64, 0);
-            if last_control_at.elapsed() > keep_alive {
-                true
-            } else {
-                false
-            }
+            last_control_at.elapsed() > keep_alive
         } else {
             true
         }
@@ -381,10 +377,7 @@ impl Client {
         }
 
         // forward to eventloop only when client status is Connected
-        match self.status() {
-            ConnectionStatus::Connected => self.send(packet),
-            _ => (),
-        }
+        if let ConnectionStatus::Connected = self.status() { self.send(packet) }
     }
 
     pub fn send_all_backlogs(&self) {
@@ -399,11 +392,11 @@ impl Client {
         }
 
         for packet in state.outgoing_rel.iter() {
-            self.send(Packet::Pubrel(packet.clone()));
+            self.send(Packet::Pubrel(*packet));
         }
 
         for packet in state.outgoing_comp.iter_mut() {
-            self.send(Packet::Pubcomp(packet.clone()));
+            self.send(Packet::Pubcomp(*packet));
         }
     }
 
@@ -434,7 +427,7 @@ impl Client {
 
     }
 
-    pub fn handle_subscribe(&self, subscribe: Box<Subscribe>) -> Result<Vec<SubscribeTopic>> {
+    pub fn handle_subscribe(&self, subscribe: Subscribe) -> Result<Vec<SubscribeTopic>> {
         let pkid = subscribe.pid;
         let mut return_codes = Vec::new();
         let mut successful_subscriptions = Vec::new();

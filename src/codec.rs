@@ -75,7 +75,8 @@ impl Encoder for MqttCodec {
         let mut stream = Cursor::new(Vec::new());
 
         // TODO: Implement `write_packet` for `&mut BytesMut`
-        if let Err(_) = stream.write_packet(&msg) {
+        if let Err(e) = stream.write_packet(&msg) {
+            error!("Encode error. Error = {:?}", e);
             return Err(io::Error::new(io::ErrorKind::Other, "Unable to encode!"));
         }
 

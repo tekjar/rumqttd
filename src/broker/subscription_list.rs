@@ -57,11 +57,9 @@ impl SubscriptionList {
                     clients.remove(index);
                 }
             }
-        } else {
-            if let Some(clients) = self.concrete.get_mut(&topic) {
-                if let Some(index) = clients.iter().position(|v| v.id == id) {
-                    clients.remove(index);
-                }
+        } else if let Some(clients) = self.concrete.get_mut(&topic) {
+            if let Some(index) = clients.iter().position(|v| v.id == id) {
+                clients.remove(index);
             }
         }
         Ok(())

@@ -17,7 +17,7 @@ use self::client_list::ClientList;
 #[derive(Debug)]
 pub struct BrokerState {
     /// Retained Publishes
-    pub retains: HashMap<SubscribeTopic, Box<Publish>>,
+    pub retains: HashMap<SubscribeTopic, Publish>,
 }
 
 impl BrokerState {
@@ -112,7 +112,7 @@ impl Broker {
         self.subscriptions.remove_client(id, uid)
     }
 
-    fn store_retain(&mut self, publish: Box<Publish>) {
+    fn store_retain(&mut self, publish: Publish) {
         let retain_subscription = SubscribeTopic {
             topic_path: publish.topic_name.clone(),
             qos: publish.qos,
@@ -125,7 +125,7 @@ impl Broker {
         }
     }
 
-    fn get_retain(&self, topic: &SubscribeTopic) -> Option<Vec<Box<Publish>>> {
+    fn get_retain(&self, topic: &SubscribeTopic) -> Option<Vec<Publish>> {
         // TODO: Remove unwrap
         let topic_path = TopicPath::from_str(topic.topic_path.clone()).unwrap();
         let mut publishes = vec![];
@@ -136,27 +136,24 @@ impl Broker {
                 let concrete_topic = TopicPath::from_str(subscription.topic_path.clone()).unwrap();
                 // let qos = subscription.qos;
 
-                // NOTE: new wildcard subscribes are expecting just topic match
-                //       with paho test suite
+                // NOTE: new wildcard subscribes are expecting just topic match with paho test suite
                 if topic_path.is_match(&concrete_topic) {
                     publishes.push(publish.clone())
                 }
             }
             // println!("{:?}", publishes);
             Some(publishes)
+        } else if let Some(publish) = self.state.retains.get(topic) {
+            publishes.push(publish.clone());
+            Some(publishes)
         } else {
-            if let Some(publish) = self.state.retains.get(topic) {
-                publishes.push(publish.clone());
-                Some(publishes)
-            } else {
-                None
-            }
+            None
         }
     }
 
-    pub fn handle_connect(&mut self, connect: Box<Connect>, addr: SocketAddr) -> Result<(Client, Connack, Receiver<Packet>)> {
+    pub fn handle_connect(&mut self, connect: Connect, addr: SocketAddr) -> Result<(Client, Connack, Receiver<Packet>)> {
         // TODO: Do connect packet validation here
-        if connect.client_id.is_empty() || connect.client_id.chars().next() == Some(' ') {
+        if connect.client_id.is_empty() || connect.client_id.starts_with(' ') {
             error!("Client shouldn't be empty or start with space");
             return Err(Error::InvalidClientId)
         }
@@ -206,7 +203,7 @@ impl Broker {
 
             // forward lastwill message to all the subscribers
             if let Some(publish) = self.clients.get_lastwill_publish(id) {
-                let _ = self.forward_to_subscribers(Box::new(publish));
+                let _ = self.forward_to_subscribers(publish);
             }
         }
         
@@ -237,7 +234,7 @@ impl Broker {
         Ok(())
     }
 
-    fn forward_to_subscribers(&mut self, publish: Box<Publish>) -> Result<()> {
+    fn forward_to_subscribers(&mut self, publish: Publish) -> Result<()> {
         let topic = publish.topic_name.clone();
         let payload = publish.payload.clone();
 
@@ -247,11 +244,11 @@ impl Broker {
 
             let subscribe_topic = SubscribeTopic {
                 topic_path: topic.clone(),
-                qos: qos.clone(),
+                qos: *qos,
             };
 
             for client in self.get_subscribed_clients(subscribe_topic)? {
-                let publish = client.publish_packet(&topic, qos.clone(), payload.clone(), false, false);
+                let publish = client.publish_packet(&topic, *qos, payload.clone(), false, false);
                 let packet = Packet::Publish(publish.clone());
 
                 match *qos {
@@ -261,16 +258,13 @@ impl Broker {
                 }
 
                 // forward to eventloop only when client status is Connected
-                match client.status() {
-                    ConnectionStatus::Connected => client.send(packet),
-                    _ => (),
-                }
+                if let ConnectionStatus::Connected = client.status() { client.send(packet) }
             }
         }
         Ok(())
     }
 
-    pub fn handle_publish(&mut self, mut publish: Box<Publish>) -> Result<()> {
+    pub fn handle_publish(&mut self, mut publish: Publish) -> Result<()> {
         let pkid = publish.pid;
         let qos = publish.qos;
         let retain = publish.retain;
@@ -307,11 +301,11 @@ impl Broker {
         for qos in [QoS::AtMostOnce, QoS::AtLeastOnce, QoS::ExactlyOnce].iter() {
             let subscribe_topic = SubscribeTopic {
                 topic_path: topic.clone(),
-                qos: qos.clone(),
+                qos: *qos,
             };
 
             for client in self.get_subscribed_clients(subscribe_topic)? {
-                let publish = client.publish_packet(&topic, qos.clone(), payload.clone(), false, false);
+                let publish = client.publish_packet(&topic, *qos, payload.clone(), false, false);
                 let packet = Packet::Publish(publish.clone());
 
                 match *qos {
@@ -479,6 +473,6 @@ mod test {
 
         let mut broker = Broker::new();
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8045);
-        let _ = broker.handle_connect(Box::new(connect), addr).unwrap();
+        let _ = broker.handle_connect(connect, addr).unwrap();
     }
 }
