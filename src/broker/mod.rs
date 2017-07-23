@@ -298,7 +298,7 @@ impl Broker {
         Ok(())
     }
 
-    pub fn handle_pubrel(&mut self, record: Box<Publish>) -> Result<()> {
+    pub fn handle_pubrel(&mut self, record: Publish) -> Result<()> {
         // client is asking to release all the recorded packets
         let topic = record.topic_name.clone();
         let payload = record.payload;

@@ -110,7 +110,7 @@ fn main() {
                 let mut broker = broker_handshake.borrow_mut();
 
                 if let Some(Packet::Connect(c)) = packet {
-                    match broker.handle_connect(*c, addr) {
+                    match broker.handle_connect(c, addr) {
                         Ok((client, connack, rx)) => {
                             info!("✨   mqtt connection successful. id = {:?}", client.id);
                             Ok((framed, client, rx, connack))
@@ -170,10 +170,10 @@ fn main() {
                             // sends acks
                             client.handle_publish(p.clone())?;
                             // forward to subscribers
-                            broker.handle_publish(*p)
+                            broker.handle_publish(p)
                         }
                         Packet::Subscribe(s) => {
-                            let successful_subscriptions = client.handle_subscribe(*s)?;
+                            let successful_subscriptions = client.handle_subscribe(s)?;
                             broker.handle_subscribe(successful_subscriptions, &client)
                         }
                         Packet::Puback(pkid) => client.handle_puback(pkid),

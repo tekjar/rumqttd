@@ -28,18 +28,18 @@ pub struct ClientState {
     pub last_pkid: PacketIdentifier,
 
     /// For QoS 1. Stores outgoing publishes
-    pub outgoing_pub: VecDeque<Box<Publish>>,
+    pub outgoing_pub: VecDeque<Publish>,
     /// For QoS 2. Stores outgoing publishes
-    pub outgoing_rec: VecDeque<Box<Publish>>,
+    pub outgoing_rec: VecDeque<Publish>,
     /// For QoS 2. Stores outgoing release
     pub outgoing_rel: VecDeque<PacketIdentifier>,
     /// For QoS 2. Stores outgoing comp
     pub outgoing_comp: VecDeque<PacketIdentifier>,
 
     /// For QoS 1. Stores incoming publishes
-    pub incoming_pub: VecDeque<Box<Publish>>,
+    pub incoming_pub: VecDeque<Publish>,
     /// For QoS 2. Stores incoming publishes
-    pub incoming_rec: VecDeque<Box<Publish>>,
+    pub incoming_rec: VecDeque<Publish>,
     /// For QoS 2. Stores incoming release
     pub incoming_rel: VecDeque<PacketIdentifier>,
     /// For QoS 2. Stores incoming comp
@@ -218,12 +218,12 @@ impl Client {
 
     // TODO: Find out if broker should drop message if a new massage with existing
     // pkid is received
-    pub fn store_outgoing_publish(&self, publish: Box<Publish>) {
+    pub fn store_outgoing_publish(&self, publish: Publish) {
         let mut state = self.state.borrow_mut();
         state.outgoing_pub.push_back(publish.clone());
     }
 
-    pub fn remove_outgoing_publish(&self, pkid: PacketIdentifier) -> Option<Box<Publish>> {
+    pub fn remove_outgoing_publish(&self, pkid: PacketIdentifier) -> Option<Publish> {
         let mut state = self.state.borrow_mut();
         if let Some(index) = state.outgoing_pub
                                   .iter()
@@ -235,12 +235,12 @@ impl Client {
         }
     }
 
-    pub fn store_outgoing_record(&self, publish: Box<Publish>) {
+    pub fn store_outgoing_record(&self, publish: Publish) {
         let mut state = self.state.borrow_mut();
         state.outgoing_rec.push_back(publish.clone());
     }
 
-    pub fn remove_outgoing_record(&self, pkid: PacketIdentifier) -> Option<Box<Publish>> {
+    pub fn remove_outgoing_record(&self, pkid: PacketIdentifier) -> Option<Publish> {
         let mut state = self.state.borrow_mut();
 
         if let Some(index) = state.outgoing_rec
@@ -287,12 +287,12 @@ impl Client {
 
     // TODO: Find out if broker should drop message if a new massage with existing
     // pkid is received
-    pub fn store_incoming_publish(&self, publish: Box<Publish>) {
+    pub fn store_incoming_publish(&self, publish: Publish) {
         let mut state = self.state.borrow_mut();
         state.incoming_pub.push_back(publish.clone());
     }
 
-    pub fn remove_incoming_publish(&self, pkid: PacketIdentifier) -> Option<Box<Publish>> {
+    pub fn remove_incoming_publish(&self, pkid: PacketIdentifier) -> Option<Publish> {
         let mut state = self.state.borrow_mut();
 
         match state.incoming_pub
@@ -303,12 +303,12 @@ impl Client {
         }
     }
 
-    pub fn store_incoming_record(&self, publish: Box<Publish>) {
+    pub fn store_incoming_record(&self, publish: Publish) {
         let mut state = self.state.borrow_mut();
         state.incoming_rec.push_back(publish.clone());
     }
 
-    pub fn remove_incoming_record(&self, pkid: PacketIdentifier) -> Option<Box<Publish>> {
+    pub fn remove_incoming_record(&self, pkid: PacketIdentifier) -> Option<Publish> {
         let mut state = self.state.borrow_mut();
 
         match state.incoming_pub
@@ -367,7 +367,6 @@ impl Client {
                                 topic_name: topic.to_owned(),
                                 payload: payload,
                               };
-        let message = Box::new(message);
         let packet = Packet::Publish(message.clone());
 
         match qos {
@@ -400,15 +399,14 @@ impl Client {
         }
     }
 
-    pub fn suback_packet(&self, pkid: PacketIdentifier, return_codes: Vec<SubscribeReturnCodes>) -> Box<Suback> {
-
-        Box::new(Suback {
-                     pid: pkid,
-                     return_codes: return_codes,
-                 })
+    pub fn suback_packet(&self, pkid: PacketIdentifier, return_codes: Vec<SubscribeReturnCodes>) -> Suback {
+        Suback {
+            pid: pkid,
+            return_codes: return_codes,
+        }
     }
 
-    pub fn publish_packet(&self, topic: &str, qos: QoS, payload: Arc<Vec<u8>>, dup: bool, retain: bool) -> Box<Publish> {
+    pub fn publish_packet(&self, topic: &str, qos: QoS, payload: Arc<Vec<u8>>, dup: bool, retain: bool) -> Publish {
 
         let pkid = if qos == QoS::AtMostOnce {
             None
@@ -416,14 +414,14 @@ impl Client {
             Some(self.next_pkid())
         };
 
-        Box::new(Publish {
-                     dup: dup,
-                     qos: qos,
-                     retain: retain,
-                     pid: pkid,
-                     topic_name: topic.to_owned(),
-                     payload: payload.clone(),
-                 })
+        Publish {
+            dup: dup,
+            qos: qos,
+            retain: retain,
+            pid: pkid,
+            topic_name: topic.to_owned(),
+            payload: payload.clone(),
+        }
 
     }
 
@@ -444,7 +442,7 @@ impl Client {
         Ok(successful_subscriptions)
     }
 
-    pub fn handle_publish(&self, publish: Box<Publish>) -> Result<()> {
+    pub fn handle_publish(&self, publish: Publish) -> Result<()> {
         let pkid = publish.pid;
         let qos = publish.qos;
 
@@ -493,7 +491,7 @@ impl Client {
         Ok(())
     }
 
-    pub fn handle_pubrel(&self, pkid: PacketIdentifier) -> Result<Box<Publish>> {
+    pub fn handle_pubrel(&self, pkid: PacketIdentifier) -> Result<Publish> {
         // send pubcomp packet to the client first
         let packet = Packet::Pubcomp(pkid);
         self.send(packet);
@@ -570,14 +568,14 @@ mod test {
         let (client, ..) = mock_client();
 
         for i in 0..100 {
-            let publish = Box::new(Publish {
+            let publish = Publish {
                                        dup: false,
                                        qos: QoS::AtLeastOnce,
                                        retain: false,
                                        pid: Some(PacketIdentifier(i)),
                                        topic_name: "hello/world".to_owned(),
                                        payload: Arc::new(vec![1, 2, 3]),
-                                   });
+                                   };
 
             client.store_outgoing_publish(publish);
         }
