@@ -30,27 +30,27 @@ memory: 4 GB 1600 MHz DDR3
 **mosquitto (1.4.11)**
 
 ```
-2017/05/13 18:26:25 time taken for publishes = 3m23.057874425s
-load average 1 =  3.14501953125
-average system memory =  2561352043
-2017/05/13 18:26:25 incoming pub count = 1000000. time taken for incoming pubs = 3m23.943611846s
+2017/07/23 06:53:08 time taken for publishes = 3m43.144186301s
+load average 1 =  2.57666015625
+average system memory =  2392426064
+2017/07/23 06:53:09 incoming pub count = 1000000. time taken for incoming pubs = 3m43.894361458s
 ```
 
 **rumqttd**
 
 ```
-2017/05/13 18:22:08 time taken for publishes = 3m21.243963316s
-load average 1 =  2.671875
-average system memory =  2606343264
-2017/05/13 18:22:09 incoming pub count = 1000000. time taken for incoming pubs = 3m22.055929751s
+2017/07/23 07:04:15 time taken for publishes = 3m34.021949483s
+load average 1 =  2.66455078125
+average system memory =  2417896266
+2017/07/23 07:04:16 incoming pub count = 1000000. time taken for incoming pubs = 3m34.770672216s
 ```
 
 **emqttd (2.1.2)**
 
 ```
-2017/05/13 18:49:00 time taken for publishes = 5m41.25939293s
-load average 1 =  2.982421875
-average system memory =  2519452728
-2017/05/13 18:49:06 missing publishes. incoming pub count = 999998. time taken for incoming pubs = 5m47.267925698s
+2017/07/23 07:13:29 time taken for publishes = 5m22.936786039s
+load average 1 =  2.70751953125
+average system memory =  2499483235
+2017/07/23 07:13:35 missing publishes. incoming pub count = 999999. time taken for incoming pubs = 5m28.707079321s
 ```
 
