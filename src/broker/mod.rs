@@ -6,6 +6,7 @@ use std::fmt::{self, Debug};
 use std::net::SocketAddr;
 
 use futures::sync::mpsc::{self, Receiver};
+use rand::{self, Rng};
 
 use mqtt3::*;
 use error::{Result, Error};
@@ -153,13 +154,19 @@ impl Broker {
 
     pub fn handle_connect(&mut self, connect: Connect, addr: SocketAddr) -> Result<(Client, Connack, Receiver<Packet>)> {
         // TODO: Do connect packet validation here
-        if connect.client_id.is_empty() || connect.client_id.starts_with(' ') {
-            error!("Client shouldn't be empty or start with space");
+        if connect.client_id.starts_with(' ') || (!connect.clean_session && connect.client_id.is_empty()) {
+            error!("Client id shouldn't start with space (or) shouldn't be empty in persistent sessions");
             return Err(Error::InvalidClientId)
         }
 
+        let client_id = if connect.client_id.is_empty() {
+            gen_client_id()
+        } else {
+            connect.client_id.clone()
+        };
+
         let (tx, rx) = mpsc::channel::<Packet>(100);
-        let mut client = Client::new(&connect.client_id, addr, tx);
+        let mut client = Client::new(&client_id, addr, tx);
         let clean_session = connect.clean_session;
 
         client.set_keep_alive(connect.keep_alive);
@@ -319,6 +326,14 @@ impl Broker {
 
         Ok(())
     }
+}
+
+fn gen_client_id() -> String {
+    let random: String = rand::thread_rng()
+                            .gen_ascii_chars()
+                            .take(7)
+                            .collect();
+    format!("rumqttd-{}", random)
 }
 
 impl Debug for Broker {

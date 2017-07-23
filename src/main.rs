@@ -5,6 +5,7 @@ extern crate tokio_io;
 extern crate tokio_timer;
 extern crate bytes;
 extern crate toml;
+extern crate rand;
 extern crate serde;
 #[macro_use]
 extern crate serde_derive;
