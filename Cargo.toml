@@ -22,3 +22,11 @@ quick-error = "1.1"
 rand = "0.3"
 mqtt3 = { git = "https://github.com/tekjar/mqtt3" }
 #mqtt3 = {path = "../mqtt3"}
+
+[lib]
+name = "libmqttd"
+path = "src/lib.rs"
+
+# [[bin]]
+# name = "rumqttd"
+# path = "src/main.rs"
