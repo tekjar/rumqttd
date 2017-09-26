@@ -51,25 +51,25 @@ use broker::Broker;
 use codec::MqttCodec;
 use error::Error;
 
-#[derive(StructOpt, Debug)]
-#[structopt(name = "Rumqttd", about = "High performance asynchronous mqtt broker")]
-pub struct CommandLine {
-    #[structopt(short = "c", help = "Rumqttd config file", default_value = "/etc/rumqttd.conf")]
-    config_path: String,
-}
+// #[derive(StructOpt, Debug)]
+// #[structopt(name = "Rumqttd", about = "High performance asynchronous mqtt broker")]
+// pub struct CommandLine {
+//     #[structopt(short = "c", help = "Rumqttd config file", default_value = "/etc/rumqttd.conf")]
+//     config_path: String,
+// }
 
 
-lazy_static! {
-    pub static ref CONF: conf::Rumqttd = {
-        let cl = CommandLine::from_args();
+// lazy_static! {
+//     pub static ref CONF: conf::Rumqttd = {
+//         let cl = CommandLine::from_args();
 
-        let mut conf = String::new();
-        let _ = File::open(cl.config_path).expect("Config Error").read_to_string(&mut conf);
-        toml::from_str::<conf::Rumqttd>(&conf).unwrap()
-    };
-}
+//         let mut conf = String::new();
+//         let _ = File::open(cl.config_path).expect("Config Error").read_to_string(&mut conf);
+//         toml::from_str::<conf::Rumqttd>(&conf).unwrap()
+//     };
+// }
 
-pub fn run_with_logger() {
+pub fn run_with_logger(port: u16) {
     CombinedLogger::init(
         vec![
             TermLogger::new(LogLevelFilter::Info, Config::default()).unwrap()
@@ -80,7 +80,7 @@ pub fn run_with_logger() {
     let mut core = Core::new().unwrap();
     let handle = core.handle();
 
-    let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), CONF.connection.port);
+    let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), port);
     info!("🌩️   starting broker");
 
     let listener = TcpListener::bind(&address, &core.handle()).unwrap();
