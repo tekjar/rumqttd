@@ -69,7 +69,7 @@ use error::Error;
 //     };
 // }
 
-pub fn run_with_logger(port: u16) {
+pub fn run_with_logger(ip_addr: Ipv4Addr, port: u16) {
     CombinedLogger::init(
         vec![
             TermLogger::new(LogLevelFilter::Info, Config::default()).unwrap()
@@ -80,7 +80,7 @@ pub fn run_with_logger(port: u16) {
     let mut core = Core::new().unwrap();
     let handle = core.handle();
 
-    let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), port);
+    let address = SocketAddr::new(IpAddr::V4(ip_addr), port);
     info!("🌩️   starting broker");
 
     let listener = TcpListener::bind(&address, &core.handle()).unwrap();
