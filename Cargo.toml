@@ -27,6 +27,6 @@ mqtt3 = { git = "https://github.com/tekjar/mqtt3" }
 name = "rumqttd"
 path = "src/lib.rs"
 
-# [[bin]]
-# name = "rumqttd"
-# path = "src/main.rs"
+[[bin]]
+name = "rumqttd"
+path = "src/main.rs"
