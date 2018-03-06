@@ -45,7 +45,7 @@ use tokio_io::AsyncRead;
 use futures::stream::Stream;
 use futures::Future;
 
-use simplelog::{Config, TermLogger, WriteLogger, CombinedLogger, LogLevelFilter};
+use simplelog::{Config, TermLogger, WriteLogger, CombinedLogger, LevelFilter};
 
 use broker::Broker;
 use codec::MqttCodec;
@@ -72,8 +72,8 @@ lazy_static! {
 fn main() {
     CombinedLogger::init(
         vec![
-            TermLogger::new(LogLevelFilter::Info, Config::default()).unwrap(),
-            WriteLogger::new(LogLevelFilter::Info, 
+            TermLogger::new(LevelFilter::Info, Config::default()).unwrap(),
+            WriteLogger::new(LevelFilter::Info, 
                              Config::default(), 
                              File::create("/tmp/rumqttd.log").unwrap()),
         ]

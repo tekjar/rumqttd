@@ -45,7 +45,7 @@ use tokio_io::AsyncRead;
 use futures::stream::Stream;
 use futures::Future;
 
-use simplelog::{Config, TermLogger, WriteLogger, CombinedLogger, LogLevelFilter};
+use simplelog::{Config, TermLogger, WriteLogger, CombinedLogger, LevelFilter};
 
 use broker::Broker;
 use codec::MqttCodec;
@@ -72,7 +72,7 @@ use error::Error;
 pub fn run_with_logger(ip_addr: Ipv4Addr, port: u16) {
     CombinedLogger::init(
         vec![
-            TermLogger::new(LogLevelFilter::Info, Config::default()).unwrap()
+            TermLogger::new(LevelFilter::Info, Config::default()).unwrap()
         ]
     ).unwrap();
 
