@@ -58,27 +58,27 @@ lazy_static! {
 }
 
 
-async fn incoming(client: client::Client, broker: Rc<RefCell<Broker>>, mut stream: SplitStream<Framed<TcpStream, MqttCodec>>) {
+use std::io;
+async fn incoming(client: &mut client::Client, broker: &mut Rc<RefCell<Broker>>, mut stream: impl Stream<Item = std::result::Result<Packet, io::Error>> + Unpin) {
     client.reset_last_control_at();
     let mut broker = broker.borrow_mut();
 
-    while let Some(packet) = stream.next().await {
-        let packet = packet.unwrap();
-        match packet {
-            Packet::Publish(p) => {
-                // sends acks
-                client.handle_publish(p.clone()).unwrap();
-                // forward to subscribers
-                broker.handle_publish(p).unwrap();
-            }
-            Packet::Subscribe(s) => {
-                let successful_subscriptions = client.handle_subscribe(s).unwrap();
-                broker.handle_subscribe(successful_subscriptions, &client).unwrap();
-            }
-            Packet::Puback(pkid) => client.handle_puback(pkid).unwrap(),
-            Packet::Pingreq => client.handle_pingreq().unwrap(),
-            _ => panic!("InvalidMqttPacket = {:?}", packet),
-        };
+    let packet = stream.next().await.unwrap();
+    let packet = packet.unwrap();
+    match packet {
+        Packet::Publish(p) => {
+            // sends acks
+            client.handle_publish(p.clone()).unwrap();
+            // forward to subscribers
+            broker.handle_publish(p).unwrap();
+        }
+        Packet::Subscribe(s) => {
+            let successful_subscriptions = client.handle_subscribe(s).unwrap();
+            broker.handle_subscribe(successful_subscriptions, &client).unwrap();
+        }
+        Packet::Puback(pkid) => client.handle_puback(pkid).unwrap(),
+        Packet::Pingreq => client.handle_pingreq().unwrap(),
+        _ => panic!("InvalidMqttPacket = {:?}", packet),
     }
 }
 
@@ -130,7 +130,7 @@ async fn accept_loop() {
     let broker = Rc::new(RefCell::new(Broker::new()));
     local.run_until(async move {
         loop {
-            let broker = broker.clone();
+            let mut broker = broker.clone();
             info!("👂🏼   listening for connections");
             let (stream, addr) = match listener.accept().await {
                 Ok(s) => s,
@@ -147,7 +147,7 @@ async fn accept_loop() {
             let (mut writer, mut reader) = framed.split();
             let packet = reader.next().await.unwrap(); 
             let packet = packet.unwrap();
-            let (client, connack,mut rx) = match packet {
+            let (mut client, connack,mut rx) = match packet {
                 Packet::Connect(c) => broker.borrow_mut().handle_connect(c, addr).unwrap(),
                 _  => panic!(),
             };
@@ -157,7 +157,9 @@ async fn accept_loop() {
             client.send_all_backlogs();
 
             task::spawn_local(async move {
-                incoming(client, broker, reader).await
+                loop {
+                    incoming(&mut client, &mut broker, &mut reader).await
+                }
             });
 
             task::spawn_local(async move {
