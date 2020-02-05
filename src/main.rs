@@ -26,6 +26,7 @@ use structopt::StructOpt;
 use tokio::net::TcpListener;
 use tokio::net::TcpStream;
 use tokio::task;
+use tokio::select;
 use tokio_util::codec::Framed;
 
 use futures::stream::Stream;
@@ -81,23 +82,40 @@ async fn incoming(client: client::Client, broker: Rc<RefCell<Broker>>, mut strea
     }
 }
 
-async fn outgoing(mut stream: impl Stream<Item = Packet> + Unpin, mut writer: SplitSink<Framed<TcpStream, MqttCodec>, Packet>) {
-    while let Some(packet) = stream.next().await {
-        let packet = match packet {
-            Packet::Publish(p) => Ok(Packet::Publish(p)),
-            Packet::Connack(c) => Ok(Packet::Connack(c)),
-            Packet::Suback(sa) => Ok(Packet::Suback(sa)),
-            Packet::Puback(pa) => Ok(Packet::Puback(pa)),
-            Packet::Pubrec(prec) => Ok(Packet::Pubrec(prec)),
-            Packet::Pubrel(prel) => Ok(Packet::Pubrel(prel)),
-            Packet::Pubcomp(pc) => Ok(Packet::Pubcomp(pc)),
-            Packet::Pingresp => Ok(Packet::Pingresp),
-            Packet::Disconnect => Err(Error::DisconnectRequest),
-            _ => unimplemented!()
-        };
+// async fn outgoing(mut stream: impl Stream<Item = Packet> + Unpin, mut writer: SplitSink<Framed<TcpStream, MqttCodec>, Packet>) {
+//     while let Some(packet) = stream.next().await {
+//         let packet = match packet {
+//             Packet::Publish(p) => Ok(Packet::Publish(p)),
+//             Packet::Connack(c) => Ok(Packet::Connack(c)),
+//             Packet::Suback(sa) => Ok(Packet::Suback(sa)),
+//             Packet::Puback(pa) => Ok(Packet::Puback(pa)),
+//             Packet::Pubrec(prec) => Ok(Packet::Pubrec(prec)),
+//             Packet::Pubrel(prel) => Ok(Packet::Pubrel(prel)),
+//             Packet::Pubcomp(pc) => Ok(Packet::Pubcomp(pc)),
+//             Packet::Pingresp => Ok(Packet::Pingresp),
+//             Packet::Disconnect => Err(Error::DisconnectRequest),
+//             _ => unimplemented!()
+//         };
+// 
+//         writer.send(packet.unwrap()).await.unwrap();
+//     }
+// }
 
-        writer.send(packet.unwrap()).await.unwrap();
-    }
+async fn outgoing(mut stream: impl Stream<Item = Packet> + Unpin) -> Packet {
+    let packet = match stream.next().await.unwrap() {
+        Packet::Publish(p) => Ok(Packet::Publish(p)),
+        Packet::Connack(c) => Ok(Packet::Connack(c)),
+        Packet::Suback(sa) => Ok(Packet::Suback(sa)),
+        Packet::Puback(pa) => Ok(Packet::Puback(pa)),
+        Packet::Pubrec(prec) => Ok(Packet::Pubrec(prec)),
+        Packet::Pubrel(prel) => Ok(Packet::Pubrel(prel)),
+        Packet::Pubcomp(pc) => Ok(Packet::Pubcomp(pc)),
+        Packet::Pingresp => Ok(Packet::Pingresp),
+        Packet::Disconnect => Err(Error::DisconnectRequest),
+        _ => unimplemented!()
+    };
+
+    packet.unwrap()
 }
 
 #[tokio::main(core_threads = 1)]
@@ -109,10 +127,10 @@ async fn accept_loop() {
     info!("Waiting for connections on {}", addr);
     // eventloop which accepts connections
     let mut listener = TcpListener::bind(addr).await.unwrap();
+    let broker = Rc::new(RefCell::new(Broker::new()));
     local.run_until(async move {
-        let broker_root = Rc::new(RefCell::new(Broker::new()));
-        let broker_connections = broker_root.clone();
         loop {
+            let broker = broker.clone();
             info!("👂🏼   listening for connections");
             let (stream, addr) = match listener.accept().await {
                 Ok(s) => s,
@@ -126,12 +144,11 @@ async fn accept_loop() {
 
             let framed = Framed::new(stream, MqttCodec::new());
             info!("☄️   new tcp connection from {}", addr);
-            let broker_handshake = broker_connections.clone();
-            let (writer, mut reader) = framed.split();
+            let (mut writer, mut reader) = framed.split();
             let packet = reader.next().await.unwrap(); 
             let packet = packet.unwrap();
-            let (client, connack, rx) = match packet {
-                Packet::Connect(c) => broker_handshake.borrow_mut().handle_connect(c, addr).unwrap(),
+            let (client, connack,mut rx) = match packet {
+                Packet::Connect(c) => broker.borrow_mut().handle_connect(c, addr).unwrap(),
                 _  => panic!(),
             };
 
@@ -140,11 +157,14 @@ async fn accept_loop() {
             client.send_all_backlogs();
 
             task::spawn_local(async move {
-                incoming(client, broker_handshake, reader).await;
+                incoming(client, broker, reader).await
             });
 
             task::spawn_local(async move {
-                outgoing(rx, writer).await;
+                loop {
+                    let packet = outgoing(&mut rx).await;
+                    writer.send(packet).await.unwrap()
+                }
             });
         }
     }).await;

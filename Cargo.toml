@@ -21,5 +21,6 @@ tokio = { version =  "0.2", features = ["full"] }
 tokio-util = { version =  "0.2", features = ["codec"] }
 rand = "0.3"
 mqtt3 = { git = "https://github.com/tekjar/mqtt3" }
+rumq-core = "0.1.0-alpha.3"
 quick-error = "1.1"
 #mqtt3 = {path = "../mqtt3"}
