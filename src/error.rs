@@ -1,8 +1,6 @@
 use std::io;
 use std::result;
 
-use mqtt3;
-
 pub type Result<T> = result::Result<T, Error>;
 
 quick_error! {
@@ -12,12 +10,6 @@ quick_error! {
             from()
             description("io error")
             display("I/O error: {}", err)
-            cause(err)
-        }
-        Mqtt3(err: mqtt3::Error) {
-            from()
-            display("mqtt3 error: {}", err)
-            description("Mqtt3 error {}")
             cause(err)
         }
         NoClient {

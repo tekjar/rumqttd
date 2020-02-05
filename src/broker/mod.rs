@@ -9,7 +9,7 @@ use rand::{self, Rng};
 use tokio::sync::mpsc::{self, Receiver};
 
 use crate::error::{Error, Result};
-use mqtt3::*;
+use rumq_core::*;
 
 use self::client_list::ClientList;
 use self::subscription_list::SubscriptionList;
@@ -18,7 +18,7 @@ use crate::client::{Client, ConnectionStatus};
 #[derive(Debug)]
 pub struct BrokerState {
     /// Retained Publishes
-    pub retains: HashMap<SubscribeTopic, Publish>,
+    pub retains: HashMap<String, Publish>,
 }
 
 impl BrokerState {
@@ -118,36 +118,14 @@ impl Broker {
         };
         if publish.payload.len() == 0 {
             // remove existing retains if new retain publish's payload len = 0
-            let _ = self.state.retains.remove(&retain_subscription);
+            let _ = self.state.retains.remove(&retain_subscription.topic_path);
         } else {
-            self.state.retains.insert(retain_subscription, publish);
+            self.state.retains.insert(retain_subscription.topic_path, publish);
         }
     }
 
     fn get_retain(&self, topic: &SubscribeTopic) -> Option<Vec<Publish>> {
-        // TODO: Remove unwrap
-        let topic_path = TopicPath::from_str(topic.topic_path.clone()).unwrap();
-        let mut publishes = vec![];
-
-        // if new subscription contains wildcards
-        if topic_path.wildcards {
-            for (subscription, publish) in self.state.retains.iter() {
-                let concrete_topic = TopicPath::from_str(subscription.topic_path.clone()).unwrap();
-                // let qos = subscription.qos;
-
-                // NOTE: new wildcard subscribes are expecting just topic match with paho test suite
-                if topic_path.is_match(&concrete_topic) {
-                    publishes.push(publish.clone())
-                }
-            }
-            // println!("{:?}", publishes);
-            Some(publishes)
-        } else if let Some(publish) = self.state.retains.get(topic) {
-            publishes.push(publish.clone());
-            Some(publishes)
-        } else {
-            None
-        }
+        None
     }
 
     pub fn handle_connect(&mut self, connect: Connect, addr: SocketAddr) -> Result<(Client, Connack, Receiver<Packet>)> {
@@ -245,7 +223,7 @@ impl Broker {
 
         // publish to all the subscribers in different qos `SubscribeTopic`
         // hash keys
-        for qos in [QoS::AtMostOnce, QoS::AtLeastOnce, QoS::ExactlyOnce].iter() {
+        for qos in [QoS::AtMostOnce, QoS::AtLeastOnce].iter() {
             let subscribe_topic = SubscribeTopic {
                 topic_path: topic.clone(),
                 qos: *qos,
@@ -257,7 +235,7 @@ impl Broker {
 
                 match *qos {
                     QoS::AtLeastOnce => client.store_outgoing_publish(publish),
-                    QoS::ExactlyOnce => client.store_outgoing_record(publish),
+                    QoS::ExactlyOnce => unimplemented!(),
                     _ => (),
                 }
 
@@ -271,7 +249,7 @@ impl Broker {
     }
 
     pub fn handle_publish(&mut self, mut publish: Publish) -> Result<()> {
-        let pkid = publish.pid;
+        let pkid = publish.pkid;
         let qos = publish.qos;
         let retain = publish.retain;
 
@@ -291,37 +269,8 @@ impl Broker {
                     error!("Ignoring publish packet. No pkid for QoS1 packet");
                 }
             }
-            QoS::ExactlyOnce => (),
+            QoS::ExactlyOnce => unimplemented!(),
         };
-
-        Ok(())
-    }
-
-    pub fn handle_pubrel(&mut self, record: Publish) -> Result<()> {
-        // client is asking to release all the recorded packets
-        let topic = record.topic_name.clone();
-        let payload = record.payload;
-
-        // publish to all the subscribers in different qos `SubscribeTopic`
-        // hash keys
-        for qos in [QoS::AtMostOnce, QoS::AtLeastOnce, QoS::ExactlyOnce].iter() {
-            let subscribe_topic = SubscribeTopic {
-                topic_path: topic.clone(),
-                qos: *qos,
-            };
-
-            for client in self.get_subscribed_clients(subscribe_topic)? {
-                let publish = client.publish_packet(&topic, *qos, payload.clone(), false, false);
-                let packet = Packet::Publish(publish.clone());
-
-                match *qos {
-                    QoS::AtLeastOnce => client.store_outgoing_publish(publish),
-                    QoS::ExactlyOnce => client.store_outgoing_record(publish),
-                    _ => (),
-                }
-                client.send(packet);
-            }
-        }
 
         Ok(())
     }

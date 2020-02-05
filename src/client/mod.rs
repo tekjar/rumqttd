@@ -8,9 +8,8 @@ use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc::Sender;
 
-use mqtt3::*;
-
 use crate::error::{Error, Result};
+use rumq_core::*;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum ConnectionStatus {
@@ -154,9 +153,9 @@ impl Client {
                 qos: last_will.qos,
                 retain: last_will.retain,
                 topic_name: last_will.topic.clone(),
-                pid: None,
+                pkid: None,
                 // TODO: Optimize the clone here
-                payload: Arc::new(last_will.message.clone().into_bytes()),
+                payload: last_will.message.clone().into_bytes(),
             })
         } else {
             None
@@ -222,7 +221,7 @@ impl Client {
 
     pub fn remove_outgoing_publish(&self, pkid: PacketIdentifier) -> Option<Publish> {
         let mut state = self.state.borrow_mut();
-        if let Some(index) = state.outgoing_pub.iter().position(|x| x.pid == Some(pkid)) {
+        if let Some(index) = state.outgoing_pub.iter().position(|x| x.pkid == Some(pkid)) {
             state.outgoing_pub.remove(index)
         } else {
             error!("Unsolicited PUBLISH packet: {:?}", pkid);
@@ -238,7 +237,7 @@ impl Client {
     pub fn remove_outgoing_record(&self, pkid: PacketIdentifier) -> Option<Publish> {
         let mut state = self.state.borrow_mut();
 
-        if let Some(index) = state.outgoing_rec.iter().position(|x| x.pid == Some(pkid)) {
+        if let Some(index) = state.outgoing_rec.iter().position(|x| x.pkid == Some(pkid)) {
             state.outgoing_rec.remove(index)
         } else {
             error!("Unsolicited RECORD packet: {:?}", pkid);
@@ -288,7 +287,7 @@ impl Client {
     pub fn remove_incoming_publish(&self, pkid: PacketIdentifier) -> Option<Publish> {
         let mut state = self.state.borrow_mut();
 
-        match state.incoming_pub.iter().position(|x| x.pid == Some(pkid)) {
+        match state.incoming_pub.iter().position(|x| x.pkid == Some(pkid)) {
             Some(i) => state.incoming_pub.remove(i),
             None => None,
         }
@@ -302,7 +301,7 @@ impl Client {
     pub fn remove_incoming_record(&self, pkid: PacketIdentifier) -> Option<Publish> {
         let mut state = self.state.borrow_mut();
 
-        match state.incoming_pub.iter().position(|x| x.pid == Some(pkid)) {
+        match state.incoming_pub.iter().position(|x| x.pkid == Some(pkid)) {
             Some(i) => state.incoming_rec.remove(i),
             None => None,
         }
@@ -340,14 +339,14 @@ impl Client {
         let _ = self.tx.clone().try_send(packet);
     }
 
-    pub fn publish(&self, topic: &str, qos: QoS, payload: Arc<Vec<u8>>, dup: bool, retain: bool) {
+    pub fn publish(&self, topic: &str, qos: QoS, payload: Vec<u8>, dup: bool, retain: bool) {
         let pkid = if qos == QoS::AtMostOnce { None } else { Some(self.next_pkid()) };
 
         let message = Publish {
             dup: dup,
             qos: qos,
             retain: retain,
-            pid: pkid,
+            pkid: pkid,
             topic_name: topic.to_owned(),
             payload: payload,
         };
@@ -355,7 +354,7 @@ impl Client {
 
         match qos {
             QoS::AtLeastOnce => self.store_outgoing_publish(message),
-            QoS::ExactlyOnce => self.store_outgoing_record(message),
+            QoS::ExactlyOnce => unimplemented!(),
             _ => (),
         }
 
@@ -387,26 +386,26 @@ impl Client {
 
     pub fn suback_packet(&self, pkid: PacketIdentifier, return_codes: Vec<SubscribeReturnCodes>) -> Suback {
         Suback {
-            pid: pkid,
+            pkid: pkid,
             return_codes: return_codes,
         }
     }
 
-    pub fn publish_packet(&self, topic: &str, qos: QoS, payload: Arc<Vec<u8>>, dup: bool, retain: bool) -> Publish {
+    pub fn publish_packet(&self, topic: &str, qos: QoS, payload: Vec<u8>, dup: bool, retain: bool) -> Publish {
         let pkid = if qos == QoS::AtMostOnce { None } else { Some(self.next_pkid()) };
 
         Publish {
             dup: dup,
             qos: qos,
             retain: retain,
-            pid: pkid,
+            pkid: pkid,
             topic_name: topic.to_owned(),
-            payload: payload.clone(),
+            payload: payload,
         }
     }
 
     pub fn handle_subscribe(&self, subscribe: Subscribe) -> Result<Vec<SubscribeTopic>> {
-        let pkid = subscribe.pid;
+        let pkid = subscribe.pkid;
         let mut return_codes = Vec::new();
         let mut successful_subscriptions = Vec::new();
         // Add current client's id to this subscribe topic
@@ -423,7 +422,7 @@ impl Client {
     }
 
     pub fn handle_publish(&self, publish: Publish) -> Result<()> {
-        let pkid = publish.pid;
+        let pkid = publish.pkid;
         let qos = publish.qos;
 
         match qos {
@@ -437,16 +436,7 @@ impl Client {
                     error!("Ignoring publish packet. No pkid for QoS1 packet");
                 }
             }
-            // save the qos2 packet and send pubrec
-            QoS::ExactlyOnce => {
-                if let Some(pkid) = pkid {
-                    self.store_outgoing_record(publish.clone());
-                    let packet = Packet::Pubrec(pkid);
-                    self.send(packet);
-                } else {
-                    error!("Ignoring record packet. No pkid for QoS2 packet");
-                }
-            }
+            _ => unimplemented!(),
         };
 
         Ok(())
@@ -463,7 +453,7 @@ impl Client {
         // remove record packet from state queues
         if let Some(record) = self.remove_outgoing_record(pkid) {
             // record and send pubrel packet
-            self.store_outgoing_rel(record.pid.unwrap()); //TODO: Remove unwrap. Might be a problem if client behaves incorrectly
+            self.store_outgoing_rel(record.pkid.unwrap()); //TODO: Remove unwrap. Might be a problem if client behaves incorrectly
             let packet = Packet::Pubrel(pkid);
             self.send(packet);
         }
@@ -502,13 +492,13 @@ impl Client {
 
         print!("OUTGOING PUB = [");
         for e in state.outgoing_pub.iter() {
-            print!("{:?} ", e.pid);
+            print!("{:?} ", e.pkid);
         }
         println!(" ]");
 
         print!("OUTGOING REC = [");
         for e in state.outgoing_rec.iter() {
-            print!("{:?} ", e.pid);
+            print!("{:?} ", e.pkid);
         }
         println!(" ]");
 
@@ -551,7 +541,7 @@ mod test {
                 dup: false,
                 qos: QoS::AtLeastOnce,
                 retain: false,
-                pid: Some(PacketIdentifier(i)),
+                pkid: Some(PacketIdentifier(i)),
                 topic_name: "hello/world".to_owned(),
                 payload: Arc::new(vec![1, 2, 3]),
             };
@@ -569,7 +559,7 @@ mod test {
             let state = client.state.borrow_mut();
 
             for i in 0..10 {
-                let index = state.outgoing_pub.iter().position(|x| x.pid == Some(PacketIdentifier(i)));
+                let index = state.outgoing_pub.iter().position(|x| x.pkid == Some(PacketIdentifier(i)));
                 assert_eq!(index, None);
             }
         }
@@ -583,7 +573,7 @@ mod test {
             // to make sure that the following client methods doesn't panic
             let state = client.state.borrow_mut();
             for i in 10..90 {
-                let index = state.outgoing_pub.iter().position(|x| x.pid == Some(PacketIdentifier(i)));
+                let index = state.outgoing_pub.iter().position(|x| x.pkid == Some(PacketIdentifier(i)));
                 assert_eq!(index, None);
             }
         }
@@ -599,7 +589,7 @@ mod test {
             let mut expected_index = 0;
 
             for i in [90, 92, 94, 96, 98].iter() {
-                let index = state.outgoing_pub.iter().position(|x| x.pid == Some(PacketIdentifier(*i)));
+                let index = state.outgoing_pub.iter().position(|x| x.pkid == Some(PacketIdentifier(*i)));
                 assert_eq!(index, Some(expected_index));
                 expected_index += 1;
             }

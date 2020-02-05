@@ -1,10 +1,9 @@
 use std::collections::HashMap;
 use std::mem;
 
-use mqtt3::{Packet, PacketIdentifier, Publish};
-
 use crate::client::{Client, ConnectionStatus};
 use crate::error::{Error, Result};
+use rumq_core::*;
 
 #[derive(Debug)]
 pub struct ClientList {

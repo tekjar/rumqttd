@@ -3,15 +3,15 @@ use std::mem;
 
 use crate::client::{Client, ConnectionStatus};
 use crate::error::Result;
-use mqtt3::{SubscribeTopic, ToTopicPath, TopicPath};
+use rumq_core::*;
 
 // NOTE: split subscription list into concrete & and wild card subscriptions
 // all concrete subscription clients could be fetched in O(1)~
 
 #[derive(Debug)]
 pub struct SubscriptionList {
-    concrete: HashMap<SubscribeTopic, Vec<Client>>,
-    wild: HashMap<SubscribeTopic, Vec<Client>>,
+    concrete: HashMap<String, Vec<Client>>,
+    wild: HashMap<String, Vec<Client>>,
 }
 
 impl SubscriptionList {
@@ -23,41 +23,22 @@ impl SubscriptionList {
     }
 
     pub fn add_subscription(&mut self, topic: SubscribeTopic, client: Client) -> Result<()> {
-        let topic_path = TopicPath::from_str(topic.topic_path.clone())?;
+        let topic_path = topic.topic_path.clone();
 
-        if topic_path.wildcards {
-            let clients = self.wild.entry(topic).or_insert(Vec::new());
-            // add client to a subscription only if it doesn't already exist or
-            // else replace the existing one
-            if let Some(index) = clients.iter().position(|v| v.id == client.id) {
-                clients[index] = client;
-            } else {
-                clients.push(client);
-            }
+        let clients = self.concrete.entry(topic_path).or_insert(Vec::new());
+        // add client to a subscription only if it doesn't already exist or
+        // else replace the existing one
+        if let Some(index) = clients.iter().position(|v| v.id == client.id) {
+            clients[index] = client;
         } else {
-            let clients = self.concrete.entry(topic).or_insert(Vec::new());
-            // add client to a subscription only if it doesn't already exist or
-            // else replace the existing one
-            if let Some(index) = clients.iter().position(|v| v.id == client.id) {
-                clients[index] = client;
-            } else {
-                clients.push(client);
-            }
+            clients.push(client);
         }
         Ok(())
     }
 
-    /// Remove a client with given id from a subscription
     pub fn remove_subscription_client(&mut self, topic: SubscribeTopic, id: &str) -> Result<()> {
-        let topic_path = TopicPath::from_str(topic.topic_path.clone())?;
-
-        if topic_path.wildcards {
-            if let Some(clients) = self.wild.get_mut(&topic) {
-                if let Some(index) = clients.iter().position(|v| v.id == id) {
-                    clients.remove(index);
-                }
-            }
-        } else if let Some(clients) = self.concrete.get_mut(&topic) {
+        let topic_path = topic.topic_path.clone();
+        if let Some(clients) = self.concrete.get_mut(&topic_path) {
             if let Some(index) = clients.iter().position(|v| v.id == id) {
                 clients.remove(index);
             }
@@ -114,26 +95,14 @@ impl SubscriptionList {
 
     /// For a given concrete topic, match topics & return list of subscribed clients
     pub fn get_subscribed_clients(&mut self, topic: SubscribeTopic) -> Result<Vec<Client>> {
-        let topic_path = TopicPath::from_str(topic.topic_path.clone())?;
+        let topic_path = topic.topic_path.clone();
         let qos = topic.qos;
-
-        // subscription topic should only have concrete topic path
-        let _ = topic_path.to_topic_name()?;
 
         let mut all_clients = vec![];
 
         // O(1) matches from concrete hashmap
-        if let Some(clients) = self.concrete.get(&topic) {
+        if let Some(clients) = self.concrete.get(&topic_path) {
             all_clients.extend(clients.clone());
-        }
-
-        for (subscription, clients) in self.wild.iter() {
-            let wild_subscription_topic = TopicPath::from_str(subscription.topic_path.clone())?;
-            let wild_subscription_qos = subscription.qos;
-
-            if wild_subscription_qos == qos && wild_subscription_topic.is_match(&topic_path) {
-                all_clients.extend(clients.clone());
-            }
         }
 
         Ok(all_clients)
