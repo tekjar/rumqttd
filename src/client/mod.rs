@@ -1,17 +1,16 @@
+use std::cell::RefCell;
+use std::collections::VecDeque;
 use std::fmt::{self, Debug};
 use std::net::SocketAddr;
-use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-use futures::sync::mpsc::Sender;
-use futures::{Future, Sink};
+use tokio::sync::mpsc::Sender;
 
 use mqtt3::*;
 
-use error::{Result, Error};
+use crate::error::{Error, Result};
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum ConnectionStatus {
@@ -80,8 +79,8 @@ impl ClientState {
             self.last_pkid,
             self.outgoing_pub.len(),
             self.outgoing_rec.len(),
-            self.outgoing_rel.len(), 
-            self.outgoing_comp.len()
+            self.outgoing_rel.len(),
+            self.outgoing_comp.len(),
         )
     }
 }
@@ -150,17 +149,15 @@ impl Client {
 
     pub fn lastwill_publish(&self) -> Option<Publish> {
         if let Some(ref last_will) = self.last_will {
-            Some(
-                Publish {
-                    dup: false,
-                    qos: last_will.qos,
-                    retain: last_will.retain,
-                    topic_name: last_will.topic.clone(),
-                    pid: None,
-                    // TODO: Optimize the clone here
-                    payload: Arc::new(last_will.message.clone().into_bytes())
-                }
-            )
+            Some(Publish {
+                dup: false,
+                qos: last_will.qos,
+                retain: last_will.retain,
+                topic_name: last_will.topic.clone(),
+                pid: None,
+                // TODO: Optimize the clone here
+                payload: Arc::new(last_will.message.clone().into_bytes()),
+            })
         } else {
             None
         }
@@ -207,7 +204,7 @@ impl Client {
         let state = self.state.borrow_mut();
         let last_control_at = state.last_control_at;
 
-        if let Some(keep_alive) = self.keep_alive  {
+        if let Some(keep_alive) = self.keep_alive {
             let keep_alive = keep_alive.as_secs();
             let keep_alive = Duration::new(f32::ceil(1.5 * keep_alive as f32) as u64, 0);
             last_control_at.elapsed() > keep_alive
@@ -225,9 +222,7 @@ impl Client {
 
     pub fn remove_outgoing_publish(&self, pkid: PacketIdentifier) -> Option<Publish> {
         let mut state = self.state.borrow_mut();
-        if let Some(index) = state.outgoing_pub
-                                  .iter()
-                                  .position(|x| x.pid == Some(pkid)) {
+        if let Some(index) = state.outgoing_pub.iter().position(|x| x.pid == Some(pkid)) {
             state.outgoing_pub.remove(index)
         } else {
             error!("Unsolicited PUBLISH packet: {:?}", pkid);
@@ -243,9 +238,7 @@ impl Client {
     pub fn remove_outgoing_record(&self, pkid: PacketIdentifier) -> Option<Publish> {
         let mut state = self.state.borrow_mut();
 
-        if let Some(index) = state.outgoing_rec
-                                  .iter()
-                                  .position(|x| x.pid == Some(pkid)) {
+        if let Some(index) = state.outgoing_rec.iter().position(|x| x.pid == Some(pkid)) {
             state.outgoing_rec.remove(index)
         } else {
             error!("Unsolicited RECORD packet: {:?}", pkid);
@@ -295,9 +288,7 @@ impl Client {
     pub fn remove_incoming_publish(&self, pkid: PacketIdentifier) -> Option<Publish> {
         let mut state = self.state.borrow_mut();
 
-        match state.incoming_pub
-                   .iter()
-                   .position(|x| x.pid == Some(pkid)) {
+        match state.incoming_pub.iter().position(|x| x.pid == Some(pkid)) {
             Some(i) => state.incoming_pub.remove(i),
             None => None,
         }
@@ -311,9 +302,7 @@ impl Client {
     pub fn remove_incoming_record(&self, pkid: PacketIdentifier) -> Option<Publish> {
         let mut state = self.state.borrow_mut();
 
-        match state.incoming_pub
-                   .iter()
-                   .position(|x| x.pid == Some(pkid)) {
+        match state.incoming_pub.iter().position(|x| x.pid == Some(pkid)) {
             Some(i) => state.incoming_rec.remove(i),
             None => None,
         }
@@ -347,26 +336,21 @@ impl Client {
         };
     }
 
-
     pub fn send(&self, packet: Packet) {
-        let _ = self.tx.clone().send(packet).wait();
+        let _ = self.tx.clone().try_send(packet);
     }
 
     pub fn publish(&self, topic: &str, qos: QoS, payload: Arc<Vec<u8>>, dup: bool, retain: bool) {
-        let pkid = if qos == QoS::AtMostOnce {
-            None
-        } else {
-            Some(self.next_pkid())
-        };
+        let pkid = if qos == QoS::AtMostOnce { None } else { Some(self.next_pkid()) };
 
         let message = Publish {
-                                dup: dup,
-                                qos: qos,
-                                retain: retain,
-                                pid: pkid,
-                                topic_name: topic.to_owned(),
-                                payload: payload,
-                              };
+            dup: dup,
+            qos: qos,
+            retain: retain,
+            pid: pkid,
+            topic_name: topic.to_owned(),
+            payload: payload,
+        };
         let packet = Packet::Publish(message.clone());
 
         match qos {
@@ -376,7 +360,9 @@ impl Client {
         }
 
         // forward to eventloop only when client status is Connected
-        if let ConnectionStatus::Connected = self.status() { self.send(packet) }
+        if let ConnectionStatus::Connected = self.status() {
+            self.send(packet)
+        }
     }
 
     pub fn send_all_backlogs(&self) {
@@ -407,12 +393,7 @@ impl Client {
     }
 
     pub fn publish_packet(&self, topic: &str, qos: QoS, payload: Arc<Vec<u8>>, dup: bool, retain: bool) -> Publish {
-
-        let pkid = if qos == QoS::AtMostOnce {
-            None
-        } else {
-            Some(self.next_pkid())
-        };
+        let pkid = if qos == QoS::AtMostOnce { None } else { Some(self.next_pkid()) };
 
         Publish {
             dup: dup,
@@ -422,7 +403,6 @@ impl Client {
             topic_name: topic.to_owned(),
             payload: payload.clone(),
         }
-
     }
 
     pub fn handle_subscribe(&self, subscribe: Subscribe) -> Result<Vec<SubscribeTopic>> {
@@ -511,7 +491,7 @@ impl Client {
     }
 
     pub fn handle_pingreq(&self) -> Result<()> {
-        debug!("PingReq <= {:?}",  self.id);
+        debug!("PingReq <= {:?}", self.id);
         let pingresp = Packet::Pingresp;
         self.send(pingresp);
         Ok(())
@@ -542,16 +522,15 @@ impl Client {
 
 #[cfg(test)]
 mod test {
-    use std::sync::Arc;
-    use futures::sync::mpsc::{self, Receiver};
     use super::Client;
+    use futures::sync::mpsc::{self, Receiver};
     use mqtt3::*;
+    use std::sync::Arc;
 
     fn mock_client() -> (Client, Receiver<Packet>) {
         let (tx, rx) = mpsc::channel::<Packet>(8);
         (Client::new("mock-client", "127.0.0.1:80".parse().unwrap(), tx), rx)
     }
-
 
     #[test]
     fn next_pkid_roll() {
@@ -569,13 +548,13 @@ mod test {
 
         for i in 0..100 {
             let publish = Publish {
-                                       dup: false,
-                                       qos: QoS::AtLeastOnce,
-                                       retain: false,
-                                       pid: Some(PacketIdentifier(i)),
-                                       topic_name: "hello/world".to_owned(),
-                                       payload: Arc::new(vec![1, 2, 3]),
-                                   };
+                dup: false,
+                qos: QoS::AtLeastOnce,
+                retain: false,
+                pid: Some(PacketIdentifier(i)),
+                topic_name: "hello/world".to_owned(),
+                payload: Arc::new(vec![1, 2, 3]),
+            };
 
             client.store_outgoing_publish(publish);
         }
@@ -590,12 +569,9 @@ mod test {
             let state = client.state.borrow_mut();
 
             for i in 0..10 {
-                let index = state.outgoing_pub
-                                 .iter()
-                                 .position(|x| x.pid == Some(PacketIdentifier(i)));
+                let index = state.outgoing_pub.iter().position(|x| x.pid == Some(PacketIdentifier(i)));
                 assert_eq!(index, None);
             }
-
         }
 
         // big sequential remove
@@ -607,9 +583,7 @@ mod test {
             // to make sure that the following client methods doesn't panic
             let state = client.state.borrow_mut();
             for i in 10..90 {
-                let index = state.outgoing_pub
-                                 .iter()
-                                 .position(|x| x.pid == Some(PacketIdentifier(i)));
+                let index = state.outgoing_pub.iter().position(|x| x.pid == Some(PacketIdentifier(i)));
                 assert_eq!(index, None);
             }
         }
@@ -625,9 +599,7 @@ mod test {
             let mut expected_index = 0;
 
             for i in [90, 92, 94, 96, 98].iter() {
-                let index = state.outgoing_pub
-                                 .iter()
-                                 .position(|x| x.pid == Some(PacketIdentifier(*i)));
+                let index = state.outgoing_pub.iter().position(|x| x.pid == Some(PacketIdentifier(*i)));
                 assert_eq!(index, Some(expected_index));
                 expected_index += 1;
             }

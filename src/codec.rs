@@ -1,9 +1,9 @@
-use std::io::{self, ErrorKind, Cursor};
-use std::error::Error;
 use bytes::BytesMut;
-use tokio_io::codec::{Encoder, Decoder};
+use std::error::Error;
+use std::io::{self, Cursor, ErrorKind};
 
-use mqtt3::{self, Packet, MqttWrite, MqttRead};
+use mqtt3::{self, MqttRead, MqttWrite, Packet};
+use tokio_util::codec::{Decoder, Encoder};
 
 pub struct MqttCodec;
 
@@ -38,8 +38,8 @@ impl Decoder for MqttCodec {
                             ErrorKind::UnexpectedEof => return Ok(None),
                             _ => {
                                 error!("mqtt3 io error = {:?}", e);
-                                return Err(io::Error::new(e.kind(), e.description()))
-                            },
+                                return Err(io::Error::new(e.kind(), e.description()));
+                            }
                         }
                     } else {
                         error!("mqtt3 read error = {:?}", e);

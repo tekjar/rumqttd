@@ -1,19 +1,19 @@
-pub mod subscription_list;
 pub mod client_list;
+pub mod subscription_list;
 
 use std::collections::HashMap;
 use std::fmt::{self, Debug};
 use std::net::SocketAddr;
 
-use futures::sync::mpsc::{self, Receiver};
 use rand::{self, Rng};
+use tokio::sync::mpsc::{self, Receiver};
 
+use crate::error::{Error, Result};
 use mqtt3::*;
-use error::{Result, Error};
 
-use client::{ConnectionStatus, Client};
-use self::subscription_list::SubscriptionList;
 use self::client_list::ClientList;
+use self::subscription_list::SubscriptionList;
+use crate::client::{Client, ConnectionStatus};
 
 #[derive(Debug)]
 pub struct BrokerState {
@@ -23,9 +23,7 @@ pub struct BrokerState {
 
 impl BrokerState {
     fn new() -> Self {
-        BrokerState {
-            retains: HashMap::new(),
-        }
+        BrokerState { retains: HashMap::new() }
     }
 }
 
@@ -60,7 +58,7 @@ impl Broker {
         let id = client.id.clone();
         let mut session_exists = false;
 
-        // there is already a client existing with this id, 
+        // there is already a client existing with this id,
         // send disconnect request this client's handle & replace this client
         if let Some(uid) = self.clients.has_client(&id) {
             session_exists = true;
@@ -156,7 +154,7 @@ impl Broker {
         // TODO: Do connect packet validation here
         if connect.client_id.starts_with(' ') || (!connect.clean_session && connect.client_id.is_empty()) {
             error!("Client id shouldn't start with space (or) shouldn't be empty in persistent sessions");
-            return Err(Error::InvalidClientId)
+            return Err(Error::InvalidClientId);
         }
 
         let client_id = if connect.client_id.is_empty() {
@@ -198,7 +196,7 @@ impl Broker {
     // clears the session state in case of clean session
     // NOTE: Don't do anything based on just client id here because this method
     // is called asynchronously on the eventloop. It is possible that disconnect is
-    // sent to event loop because of new connections just before client 'replace' 
+    // sent to event loop because of new connections just before client 'replace'
     // happens and removing client based on just ID here might remove the replaced
     // client from queues
     pub fn handle_disconnect(&mut self, id: &str, uid: u8, clean_session: bool) -> Result<()> {
@@ -213,7 +211,7 @@ impl Broker {
                 let _ = self.forward_to_subscribers(publish);
             }
         }
-        
+
         if clean_session {
             self.remove_client(id, uid).unwrap();
         }
@@ -248,7 +246,6 @@ impl Broker {
         // publish to all the subscribers in different qos `SubscribeTopic`
         // hash keys
         for qos in [QoS::AtMostOnce, QoS::AtLeastOnce, QoS::ExactlyOnce].iter() {
-
             let subscribe_topic = SubscribeTopic {
                 topic_path: topic.clone(),
                 qos: *qos,
@@ -265,7 +262,9 @@ impl Broker {
                 }
 
                 // forward to eventloop only when client status is Connected
-                if let ConnectionStatus::Connected = client.status() { client.send(packet) }
+                if let ConnectionStatus::Connected = client.status() {
+                    client.send(packet)
+                }
             }
         }
         Ok(())
@@ -329,32 +328,25 @@ impl Broker {
 }
 
 fn gen_client_id() -> String {
-    let random: String = rand::thread_rng()
-                            .gen_ascii_chars()
-                            .take(7)
-                            .collect();
+    let random: String = rand::thread_rng().gen_ascii_chars().take(7).collect();
     format!("rumqttd-{}", random)
 }
 
 impl Debug for Broker {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f,
-               "{:#?}\n{:#?}\n{:#?}",
-               self.clients,
-               self.subscriptions,
-               self.state)
+        write!(f, "{:#?}\n{:#?}\n{:#?}", self.clients, self.subscriptions, self.state)
     }
 }
 
 #[cfg(test)]
 mod test {
-    use std::net::{SocketAddr, IpAddr, Ipv4Addr};
     use std::cell::RefCell;
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use std::rc::Rc;
 
-    use futures::sync::mpsc::{self, Receiver};
-    use client::{Client, ConnectionStatus};
     use super::Broker;
+    use client::{Client, ConnectionStatus};
+    use futures::sync::mpsc::{self, Receiver};
     use mqtt3::*;
 
     fn mock_client(id: &str, uid: u8) -> (Client, Receiver<Packet>) {
@@ -449,8 +441,6 @@ mod test {
         }
     }
 
-
-
     #[test]
     fn change_connection_status_of_clients_and_verify_status_in_subscriptions() {
         let (c1, ..) = mock_client("mock-client-1", 0);
@@ -466,7 +456,7 @@ mod test {
 
         // add c1 to to s1, s2, s3 & s4
         broker.add_subscription_client(s1.clone(), c1.clone()).unwrap();
-        
+
         // change connection status of a client in 'clients'
         broker.handle_disconnect("mock-client-1", 0, false).unwrap();
 
@@ -477,7 +467,7 @@ mod test {
     #[test]
     fn new_clients_state_after_reconnections() {
         let connect = Connect {
-            protocol:  Protocol::new("MQTT", 4).unwrap(),
+            protocol: Protocol::new("MQTT", 4).unwrap(),
             keep_alive: 100,
             client_id: "session-test".to_owned(),
             clean_session: false,

@@ -1,10 +1,10 @@
-use std::collections::{HashMap};
+use std::collections::HashMap;
 use std::mem;
 
 use mqtt3::{Packet, PacketIdentifier, Publish};
 
-use client::{Client, ConnectionStatus};
-use error::{Result, Error};
+use crate::client::{Client, ConnectionStatus};
+use crate::error::{Error, Result};
 
 #[derive(Debug)]
 pub struct ClientList {
@@ -13,26 +13,24 @@ pub struct ClientList {
     // new client with same id, old client should be disconnected to
     // prevent tcp halfopen connections. since the the final disconnect
     // handling happens in main through a channel, to prevent removal of
-    // the new client (incase we replaced using insert() when using 
+    // the new client (incase we replaced using insert() when using
     // Hashmap<String, Client>) we use a vec where old client will be remove first
     list: HashMap<String, Client>,
 }
 
 impl ClientList {
     pub fn new() -> ClientList {
-        ClientList {
-            list: HashMap::new(),
-        }
+        ClientList { list: HashMap::new() }
     }
 
     pub fn add_client(&mut self, client: Client) -> Result<()> {
         if self.list.get_mut(&client.id).is_some() {
-            return Err(Error::ClientIdExists)
+            return Err(Error::ClientIdExists);
         }
 
         let id = client.id.clone();
         self.list.insert(id, client);
-        
+
         Ok(())
     }
 
@@ -50,7 +48,7 @@ impl ClientList {
             let _ = mem::replace(&mut c.keep_alive, client.keep_alive);
             let _ = mem::replace(&mut c.clean_session, client.clean_session);
             let _ = mem::replace(&mut c.last_will, client.last_will);
-            return Ok(c.clone())
+            return Ok(c.clone());
         }
         Err(Error::NoClient)
     }
@@ -86,7 +84,7 @@ impl ClientList {
         Ok(())
     }
 
-    // Set conneciton status of client with given id 
+    // Set conneciton status of client with given id
     pub fn set_status(&self, id: &str, uid: u8, status: ConnectionStatus) -> Result<()> {
         if let Some(client) = self.list.get(id) {
             if client.uid == uid {
@@ -98,7 +96,7 @@ impl ClientList {
         }
     }
 
-    // Set conneciton status of client with given id 
+    // Set conneciton status of client with given id
     pub fn status(&self, id: &str) -> Option<ConnectionStatus> {
         if let Some(client) = self.list.get(id) {
             Some(client.status())
@@ -138,14 +136,14 @@ impl ClientList {
     // get uid of client for given client id
     pub fn get_uid(&self, id: &str) -> Option<u8> {
         if let Some(client) = self.list.get(id) {
-            return Some(client.uid)
+            return Some(client.uid);
         }
         None
     }
 
     pub fn get_lastwill_publish(&self, id: &str) -> Option<Publish> {
         if let Some(client) = self.list.get(id) {
-            return client.lastwill_publish()
+            return client.lastwill_publish();
         }
         None
     }
@@ -153,9 +151,9 @@ impl ClientList {
 
 #[cfg(test)]
 mod test {
-    use futures::sync::mpsc::{self, Receiver};
-    use client::Client;
     use super::ClientList;
+    use client::Client;
+    use futures::sync::mpsc::{self, Receiver};
     use mqtt3::*;
 
     fn mock_client(id: &str, uid: u8) -> (Client, Receiver<Packet>) {

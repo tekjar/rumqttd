@@ -2,6 +2,7 @@
 name = "rumqttd"
 version = "0.1.0"
 authors = ["tekjar <k.teza1@gmail.com>"]
+edition = "2018"
 
 [dependencies]
 toml = "0.4"
@@ -13,12 +14,12 @@ chrono = "0.4"
 lazy_static = "0.2"
 serde_derive = "1"
 serde = "1"
-bytes = "0.4"
-futures = "0.1"
-tokio-io = "0.1"
-tokio-core = "0.1"
-tokio-timer = "0.1"
-quick-error = "1.1"
+bytes = "0.5"
+futures = "0.3"
+futures-util = "0.3"
+tokio = { version =  "0.2", features = ["full"] }
+tokio-util = { version =  "0.2", features = ["codec"] }
 rand = "0.3"
 mqtt3 = { git = "https://github.com/tekjar/mqtt3" }
+quick-error = "1.1"
 #mqtt3 = {path = "../mqtt3"}

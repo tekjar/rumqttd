@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 use std::mem;
 
-use client::{Client, ConnectionStatus};
-use mqtt3::{TopicPath, SubscribeTopic, ToTopicPath};
-use error::Result;
+use crate::client::{Client, ConnectionStatus};
+use crate::error::Result;
+use mqtt3::{SubscribeTopic, ToTopicPath, TopicPath};
 
 // NOTE: split subscription list into concrete & and wild card subscriptions
 // all concrete subscription clients could be fetched in O(1)~
@@ -119,7 +119,7 @@ impl SubscriptionList {
 
         // subscription topic should only have concrete topic path
         let _ = topic_path.to_topic_name()?;
-        
+
         let mut all_clients = vec![];
 
         // O(1) matches from concrete hashmap
@@ -142,9 +142,9 @@ impl SubscriptionList {
 
 #[cfg(test)]
 mod test {
-    use futures::sync::mpsc::{self, Receiver};
-    use client::Client;
     use super::SubscriptionList;
+    use client::Client;
+    use futures::sync::mpsc::{self, Receiver};
     use mqtt3::*;
 
     fn mock_client(id: &str, uid: u8) -> (Client, Receiver<Packet>) {
@@ -309,7 +309,7 @@ mod test {
 
     /// subscription("a/+/c", atmostonce) shouldn't match with ("a/b/c", atleastonce)
     #[test]
-    fn dont_match_subscription_with_matching_topic_but_nonmatching_qos(){
+    fn dont_match_subscription_with_matching_topic_but_nonmatching_qos() {
         let (c1, ..) = mock_client("mock-client-1", 0);
         let s1 = SubscribeTopic {
             topic_path: "hello/+/rumqttd".to_owned(),
@@ -341,5 +341,4 @@ mod test {
         let mut sub_list = SubscriptionList::new();
         sub_list.add_subscription(s1, c1).unwrap();
     }
-
 }
