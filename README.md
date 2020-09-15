@@ -1,3 +1,6 @@
+## No more development here. Follow [this](https://github.com/bytebeamio/rumqtt) repo for progress
+
+
 # rumqttd
 High performance tokio based rust mqtt broker
 
